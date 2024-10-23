@@ -1,6 +1,10 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include "../include/glmath.h"
+
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/vec4.hpp>
+#include <glm/mat4x4.hpp>
 
 #include <iostream>
 
@@ -15,9 +19,9 @@ int main() {
 
     std::cout << extensionCount << " extensions supported\n";
 
-    glmath::mat4 matrix;
-    glmath::vec4 vec;
-    glmath::vec4 test = matrix * vec;
+    glm::mat4 matrix;
+    glm::vec4 vec;
+    glm::vec4 test = matrix * vec;
 
     while(!glfwWindowShouldClose(window)) {
         glfwPollEvents();
