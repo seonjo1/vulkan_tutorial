@@ -8,7 +8,7 @@ set(WINDOW_WIDTH 1920)
 set(WINDOW_HEIGHT 1080)
 
 project(${PROJECT_NAME})
-set(SRC src/main.cpp src/glmath.cpp)
+set(SRC src/main.cpp)
 
 add_executable(${PROJECT_NAME} ${SRC})
 
@@ -16,6 +16,7 @@ include(Dependency.cmake)
 
 # 우리 프로젝트에 include / lib 관련 옵션 추가
 
+set(CMAKE_PREFIX_PATH "C:/VulkanSDK/1.3.296.0")
 find_package(Vulkan REQUIRED)
 target_link_libraries(${PROJECT_NAME} PUBLIC Vulkan::Vulkan)
 
