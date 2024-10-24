@@ -1,21 +1,29 @@
 NAME :=	VULKAN_TUTORIAL
 
-all : $(NAME)
+all: $(NAME)_debug
 
-$(NAME):
-	@cmake -Bbuild . 
+release: $(NAME)_release
+
+$(NAME)_debug:
+	@cmake -Bbuild -DCMAKE_BUILD_TYPE=Debug .
 	@cmake --build build --config Debug
-	@mv ./build/Debug/VULKAN_TUTORIAL.exe ./VULKAN_TUTORIAL.exe
-	@echo [SUCCESS] $@ compiled successfully!
+	@mv ./build/Debug/$(NAME).exe ./$(NAME)_debug.exe
+	@echo [SUCCESS] $@ compiled successfully with debug mode and validation layers!
 
-clean :
+$(NAME)_release:
+	@cmake -Bbuild -DCMAKE_BUILD_TYPE=Release .
+	@cmake --build build --config Release
+	@mv ./build/Release/$(NAME).exe ./$(NAME)_release.exe
+	@echo [SUCCESS] $@ compiled successfully without validation layers!
+
+clean:
 	@rm -rf ./build/
-	@echo [CLEAN] Object files have been removed!
+	@echo [CLEAN] Build files have been removed!
 
-fclean : clean
-	@rm -rf VULKAN_TUTORIAL.exe
+fclean: clean
+	@rm -rf $(NAME)_debug.exe $(NAME)_release.exe
 	@echo [FCLEAN] Executable files have been fully removed!
 
-re : fclean all
+re: fclean all
 
-.PHONY : all clean fclean re
+.PHONY: all clean fclean re debug release

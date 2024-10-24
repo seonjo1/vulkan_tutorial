@@ -1,3 +1,4 @@
 .vscode
 build/
-VULKAN_TUTORIAL.exe
+VULKAN_TUTORIAL_debug.exe
+VULKAN_TUTORIAL_release.exe
