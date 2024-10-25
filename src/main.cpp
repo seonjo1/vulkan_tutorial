@@ -51,6 +51,8 @@ private:
 	VkInstance instance;
 	VkDebugUtilsMessengerEXT debugMessenger;
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+	VkDevice device;
+	VkQueue graphicsQueue;
 	
 	void initWindow() {
 		glfwInit();
@@ -65,6 +67,7 @@ private:
 		createInstance();
 		setupDebugMessenger();
 		pickPhysicalDevice();
+		createLogicalDevice();
 	}
 
 	void createInstance() {
@@ -252,6 +255,53 @@ private:
 		return indices;
 	}
 
+	void createLogicalDevice() {
+		// 그래픽 큐 패밀리의 인덱스를 가져옴
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+		
+		// 큐 생성을 위한 정보 설정 
+		VkDeviceQueueCreateInfo queueCreateInfo{};
+		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
+		queueCreateInfo.queueCount = 1;
+		// 큐 우선순위 0.0f ~ 1.0f 로 표현
+		// 1.0f 이 제일 우선순위가 높음
+		float queuePriority = 1.0f;
+		queueCreateInfo.pQueuePriorities = &queuePriority;
+
+		// 사용할 장치 기능이 포함된 구조체
+		// vkGetPhysicalDeviceFeatures 함수로 디바이스에서 설정 가능한
+		// 장치 기능 목록을 확인할 수 있음
+		// 일단 지금은 VK_FALSE로 전부 등록함
+		VkPhysicalDeviceFeatures deviceFeatures{};
+
+		// 논리적 장치 생성을 위한 정보 등록
+		VkDeviceCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+		// 큐 패밀리를 여러 개 쓰고 싶으면 여러개의 VKDeviceQueueCreateInfo가 필요
+		createInfo.pQueueCreateInfos = &queueCreateInfo;
+		createInfo.queueCreateInfoCount = 1;
+		createInfo.pEnabledFeatures = &deviceFeatures;
+		// 확장 수는 일단 0으로 설정
+		createInfo.enabledExtensionCount = 0;
+		// 구버전 호환을 위해 디버그 모드일 경우
+		// 검증 레이어를 포함 시키지만, 현대 시스템에서는 논리적 장치의 레이어를 안 씀
+		if (enableValidationLayers) {
+			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+			createInfo.ppEnabledLayerNames = validationLayers.data();
+		} else {
+			createInfo.enabledLayerCount = 0;
+		}
+
+		// 논리적 장치 생성
+		if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+ 		   throw std::runtime_error("failed to create logical device!");
+		}
+
+		// 큐 핸들 가져오기
+		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+	}
+
 	void mainLoop() {
 	    while (!glfwWindowShouldClose(window)) {
     	    glfwPollEvents();
@@ -263,6 +313,8 @@ private:
 		if (enableValidationLayers) {
 			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
 		}
+		// 논리적 장치 파괴
+		vkDestroyDevice(device, nullptr);
 		// 인스턴스 파괴
 		vkDestroyInstance(instance, nullptr);
 		// 윈도우 파괴
