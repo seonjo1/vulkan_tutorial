@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <cstdlib>
 #include <vector>
+#include <optional>
 
 // 검증 레이어 설정
 const std::vector<const char*> validationLayers = {
@@ -27,6 +28,14 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback( VkDebugUtilsMessageSeverity
 	// VK_TRUE 반환시 프로그램 종료됨
     return VK_FALSE;
 }
+
+struct QueueFamilyIndices {
+	std::optional<uint32_t> graphicsFamily;
+
+	bool isComplete() const {
+		return graphicsFamily.has_value();
+	}
+};
 
 class HelloTriangleApplication {
 public:
@@ -209,7 +218,38 @@ private:
 	}	
 
 	bool isDeviceSuitable(VkPhysicalDevice device) {
-    	return true;
+		QueueFamilyIndices indices = findQueueFamilies(device);
+	    return indices.isComplete();
+	}
+
+	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+		QueueFamilyIndices indices;
+
+		// 지원하는 큐 패밀리 개수 가져오기
+		uint32_t queueFamilyCount = 0;
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+		// 큐 패밀리 리스트 가져오기
+		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+		// 그래픽 큐 패밀리 검색
+		int i = 0;
+		for (const auto& queueFamily : queueFamilies) {
+			// 그래픽 큐 패밀리 찾기 성공한 경우 indices에 값 생성
+			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+				indices.graphicsFamily = i;
+			}
+
+			// 그래픽 큐 패밀리 찾은 경우 break
+			if (indices.isComplete()) {
+				break;
+			}
+
+			i++;
+		}
+		// 그래픽 큐 패밀리를 못 찾은 경우 값이 없는 채로 반환 됨
+		return indices;
 	}
 
 	void mainLoop() {
