@@ -3,15 +3,23 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <algorithm>
 #include <vector>
 #include <cstring>
 #include <cstdlib>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <set>
 
 // 검증 레이어 설정
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
+};
+
+// 스왑 체인 확장
+const std::vector<const char*> deviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
 #ifdef NDEBUG
@@ -48,6 +56,12 @@ struct QueueFamilyIndices {
     }
 };
 
+struct SwapChainSupportDetails {
+	VkSurfaceCapabilitiesKHR capabilities;
+	std::vector<VkSurfaceFormatKHR> formats;
+	std::vector<VkPresentModeKHR> presentModes;
+};
+
 class HelloTriangleApplication {
 public:
 	void run() {
@@ -70,6 +84,12 @@ private:
 	VkQueue graphicsQueue;
 	VkQueue presentQueue;
 
+    VkSwapchainKHR swapChain;
+    std::vector<VkImage> swapChainImages;
+    VkFormat swapChainImageFormat;
+    VkExtent2D swapChainExtent;
+	std::vector<VkImageView> swapChainImageViews;
+
 	void initWindow() {
 		glfwInit();
 
@@ -85,6 +105,8 @@ private:
 		createSurface();
 		pickPhysicalDevice();
 		createLogicalDevice();
+		createSwapChain();
+		createImageViews();
 	}
 
 	void mainLoop() {
@@ -94,12 +116,18 @@ private:
 	}
 
 	void cleanup() {
+		// 이미지뷰 삭제
+		for (auto imageView : swapChainImageViews) {
+			vkDestroyImageView(device, imageView, nullptr);
+		}
+		// 스왑 체인 파괴
+		vkDestroySwapchainKHR(device, swapChain, nullptr);
+		// 논리적 장치 파괴
+		vkDestroyDevice(device, nullptr);
 		// 메시지 객체 파괴
 		if (enableValidationLayers) {
 			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
 		}
-		// 논리적 장치 파괴
-		vkDestroyDevice(device, nullptr);
 		// 화면 객체 파괴
 		vkDestroySurfaceKHR(instance, surface, nullptr);
 		// 인스턴스 파괴
@@ -111,6 +139,11 @@ private:
 	}
 
 	void createInstance() {
+		// 디버그 모드에서 검증 레이어 적용 불가능시 예외 발생
+		if (enableValidationLayers && !checkValidationLayerSupport()) {
+			throw std::runtime_error("validation layers requested, but not available!");
+		}
+
 		// 애플리케이션 정보를 담은 구조체
 		VkApplicationInfo appInfo{};
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -127,11 +160,6 @@ private:
 		std::vector<const char*> extensions = getRequiredExtensions();
 		createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
 		createInfo.ppEnabledExtensionNames = extensions.data();
-
-		// 디버그 모드에서 검증 레이어 적용 불가능시 예외 발생
-		if (enableValidationLayers && !checkValidationLayerSupport()) {
-			throw std::runtime_error("validation layers requested, but not available!");
-		}
 	
 		// 디버깅 메시지 객체 생성을 위한 정보 구조체
 	    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
@@ -149,8 +177,7 @@ private:
 		}
 
 		// 인스턴스 생성
-		VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
-		if (result != VK_SUCCESS) {
+		if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create instance!");
 		}
 	}
@@ -173,7 +200,7 @@ private:
 		if (!enableValidationLayers) return;
 
 		// VkDebugUtilsMessengerCreateInfoEXT 구조체 생성
-		VkDebugUtilsMessengerCreateInfoEXT createInfo{};
+		VkDebugUtilsMessengerCreateInfoEXT createInfo;
 		populateDebugMessengerCreateInfo(createInfo);
 
 		// 디버그 메시지 객체 생성
@@ -191,9 +218,11 @@ private:
 	void pickPhysicalDevice() {
 		uint32_t deviceCount = 0;
 		vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+
 		if (deviceCount == 0) {
   			  throw std::runtime_error("failed to find GPUs with Vulkan support!");
 		}
+
 		std::vector<VkPhysicalDevice> devices(deviceCount);
 		vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
@@ -241,8 +270,11 @@ private:
 		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 		createInfo.pQueueCreateInfos = queueCreateInfos.data();
 		createInfo.pEnabledFeatures = &deviceFeatures;
-		// 확장 수는 일단 0으로 설정
-		createInfo.enabledExtensionCount = 0;
+
+		// 확장 설정
+		createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+		
 		// 구버전 호환을 위해 디버그 모드일 경우
 		// 검증 레이어를 포함 시키지만, 현대 시스템에서는 논리적 장치의 레이어를 안 씀
 		if (enableValidationLayers) {
@@ -262,9 +294,205 @@ private:
 		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 	}
 
+	void createSwapChain() {
+		SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+		// 서피스 포맷 선택
+		VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+		// 프레젠테이션 모드 선택
+		VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+		// 스왑 범위 선택 (스왑 체인의 이미지 해상도 결정)
+		VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+		// 스왑 체인에서 필요한 이미지 수 결정 (최소 이미지 수 + 1)
+		uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+
+		// 만약 필요한 이미지 수가 최댓값을 넘으면 clamp
+		if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+ 		   imageCount = swapChainSupport.capabilities.maxImageCount;
+		}
+		
+		VkSwapchainCreateInfoKHR createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+		createInfo.surface = surface;
+
+		// 이미지 개수의 최솟값 설정 (최댓값은 아까 봤던 이미지 최댓값으로 들어감)
+		createInfo.minImageCount = imageCount;
+		createInfo.imageFormat = surfaceFormat.format;
+		createInfo.imageColorSpace = surfaceFormat.colorSpace;
+		createInfo.imageExtent = extent;
+		createInfo.imageArrayLayers = 1;
+		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+		uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+
+		if (indices.graphicsFamily != indices.presentFamily) {
+			createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+			createInfo.queueFamilyIndexCount = 2;
+			createInfo.pQueueFamilyIndices = queueFamilyIndices;
+		} else {
+			createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		}
+
+		createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+		createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+		createInfo.presentMode = presentMode;
+		createInfo.clipped = VK_TRUE;
+
+		createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+		if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create swap chain!");
+		}
+	
+		vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+		swapChainImages.resize(imageCount);
+		vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+
+		swapChainImageFormat = surfaceFormat.format;
+		swapChainExtent = extent;
+	}
+
+	void createImageViews() {
+		swapChainImageViews.resize(swapChainImages.size());
+		for (size_t i = 0; i < swapChainImages.size(); i++) {
+			VkImageViewCreateInfo createInfo{};
+			createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			createInfo.image = swapChainImages[i];
+
+			createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			createInfo.format = swapChainImageFormat;
+
+			createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			createInfo.subresourceRange.baseMipLevel = 0;
+			createInfo.subresourceRange.levelCount = 1;
+			createInfo.subresourceRange.baseArrayLayer = 0;
+			createInfo.subresourceRange.layerCount = 1;
+
+			if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create image views!");
+			}
+		}
+	}
+
+	// 지원하는 포맷중 1개 반환
+	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+		for (const auto& availableFormat : availableFormats) {
+			// 만약 선호하는 포맷이 존재할 경우 그 포맷을 반환
+			if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
+				availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+				return availableFormat;
+			}
+		}
+		// 선호하는 포맷이 없는 경우 첫 번째 포맷 반환
+		return availableFormats[0];
+	}
+
+	// 프레젠테이션 모드 선택
+	VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
+		for (const auto& availablePresentMode : availablePresentModes) {
+			// 선호하는 mode가 존재하면 해당 mode 반환 
+			if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+				return availablePresentMode;
+			}
+		}
+		// 선호하는 mode가 존재하지 않으면 기본 값인 VK_PRESENT_MODE_FIFO_KHR 반환
+		return VK_PRESENT_MODE_FIFO_KHR;
+	}
+
+	// 스왑 체인 이미지의 해상도 결정
+	VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+		// 만약 currentExtent의 width가 std::numeric_limits<uint32_t>::max()가 아니면, 시스템이 이미 권장하는 스왑체인 크기를 제공하는 것
+		if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+			return capabilities.currentExtent; // 권장 사항 사용
+		} else {
+			// 그렇지 않은 경우, 창의 현재 프레임 버퍼 크기를 사용하여 스왑체인 크기를 결정
+			int width, height;
+			glfwGetFramebufferSize(window, &width, &height);
+
+			VkExtent2D actualExtent = {
+				static_cast<uint32_t>(width),
+				static_cast<uint32_t>(height)
+			};
+
+			// width, height를 capabilites의 min, max 범위로 clamping
+			actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+			actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+
+			return actualExtent;
+		}
+	}
+	
+	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
+		SwapChainSupportDetails details;
+
+		// capability 정보 쿼리
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+		// device에서 surface 객체를 지원하는 format이 존재하는지 확인 
+		uint32_t formatCount;
+		vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+		if (formatCount != 0) {
+			details.formats.resize(formatCount);
+			vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+		}
+
+		// device에서 surface 객체를 지원하는 presentMode가 있는지 확인 
+		uint32_t presentModeCount;
+		vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+
+		if (presentModeCount != 0) {
+			details.presentModes.resize(presentModeCount);
+			vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+		}
+
+		return details;
+	}
+
 	bool isDeviceSuitable(VkPhysicalDevice device) {
+		// 큐 패밀리 확인
 		QueueFamilyIndices indices = findQueueFamilies(device);
-	    return indices.isComplete();
+		
+		// 스왑 체인 확장을 지원하는지 확인
+		bool extensionsSupported = checkDeviceExtensionSupport(device);
+		bool swapChainAdequate = false;
+
+		// 스왑 체인 확장이 존재하는 경우
+		if (extensionsSupported) {
+			// 물리 디바이스와 surface의 호환성을 검사
+			SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+			// format과 presentMode가 존재하면 통과
+			swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+		}
+
+		return indices.isComplete() && extensionsSupported && swapChainAdequate;
+	}
+
+	// 디바이스가 지원하는 확장 중 
+	bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+		uint32_t extensionCount;
+		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+		std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+		// 스왑 체인 확장이 존재하는지 확인
+		std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+		for (const auto& extension : availableExtensions) {
+			// 지원 가능한 확장들 목록을 순회하며 제거
+			requiredExtensions.erase(extension.extensionName);
+		}
+
+		// 만약 기존에 있던 확장이 제거되면 true
+		// 기존에 있던 확장이 그대로면 지원을 안 하는 것이므로 false
+		return requiredExtensions.empty();
 	}
 
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
