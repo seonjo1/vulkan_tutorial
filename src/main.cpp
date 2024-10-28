@@ -85,13 +85,15 @@ private:
 	VkQueue graphicsQueue;
 	VkQueue presentQueue;
 
-    VkSwapchainKHR swapChain;
-    std::vector<VkImage> swapChainImages;
-    VkFormat swapChainImageFormat;
-    VkExtent2D swapChainExtent;
+	VkSwapchainKHR swapChain;
+	std::vector<VkImage> swapChainImages;
+	VkFormat swapChainImageFormat;
+	VkExtent2D swapChainExtent;
 	std::vector<VkImageView> swapChainImageViews;
 
-    VkPipelineLayout pipelineLayout;
+	VkRenderPass renderPass;
+	VkPipelineLayout pipelineLayout;
+	VkPipeline graphicsPipeline;
 
 	void initWindow() {
 		glfwInit();
@@ -110,6 +112,7 @@ private:
 		createLogicalDevice();
 		createSwapChain();
 		createImageViews();
+		createRenderPass();
 		createGraphicsPipeline();
 	}
 
@@ -120,28 +123,29 @@ private:
 	}
 
 	void cleanup() {
-		// 파이프라인 레이아웃 삭제
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);      // 파이프라인 객체 삭제
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);  // 파이프라인 레이아웃 삭제
+		vkDestroyRenderPass(device, renderPass, nullptr);          // 렌더 패스삭제
+
 		// 이미지뷰 삭제
 		for (auto imageView : swapChainImageViews) {
 			vkDestroyImageView(device, imageView, nullptr);
 		}
-		// 스왑 체인 파괴
-		vkDestroySwapchainKHR(device, swapChain, nullptr);
-		// 논리적 장치 파괴
-		vkDestroyDevice(device, nullptr);
+
+		vkDestroySwapchainKHR(device, swapChain, nullptr);         // 스왑 체인 파괴
+		vkDestroyDevice(device, nullptr);                          // 논리적 장치 파괴
+
 		// 메시지 객체 파괴
 		if (enableValidationLayers) {
 			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
 		}
-		// 화면 객체 파괴
-		vkDestroySurfaceKHR(instance, surface, nullptr);
-		// 인스턴스 파괴
-		vkDestroyInstance(instance, nullptr);
-		// 윈도우 파괴
-		glfwDestroyWindow(window);
-		// glfw 종료
-		glfwTerminate();
+
+		vkDestroySurfaceKHR(instance, surface, nullptr);           // 화면 객체 파괴
+		vkDestroyInstance(instance, nullptr);                      // 인스턴스 파괴
+
+		glfwDestroyWindow(window);                                 // 윈도우 파괴
+
+		glfwTerminate();									       // glfw 종료
 	}
 
 	void createInstance() {
@@ -387,6 +391,43 @@ private:
 		}
 	}
 
+	void createRenderPass() {
+		// attachment 설정
+		VkAttachmentDescription colorAttachment{};
+		colorAttachment.format = swapChainImageFormat; // 이미지 포맷
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT; // 샘플 개수
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;  // 렌더링 전 버퍼 클리어
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // 렌더링 결과 저장
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; // 이전 데이터 무시
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE; // 저장 x
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // 초기 레이아웃 설정 x
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // 최종 레이아웃 화면 출력용으로 설정
+
+		// subpass가 attachment를 어떻게 참조할지 정의
+		VkAttachmentReference colorAttachmentRef{};
+		colorAttachmentRef.attachment = 0;
+		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		// subpass를 정의
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorAttachmentRef;
+
+		// 렌더 패스 정의
+		VkRenderPassCreateInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+
+		// 렌더 패스 생성
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create render pass!");
+		}
+	}
+
 	void createGraphicsPipeline() {
 		// SPIR-V 파일 읽기
 		std::vector<char> vertShaderCode = readFile("./shaders/vert.spv");
@@ -486,6 +527,29 @@ private:
 
 		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create pipeline layout!");
+		}
+
+		// 파이프라인 정보 생성
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = nullptr; // Optional
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+		pipelineInfo.layout = pipelineLayout;
+		pipelineInfo.renderPass = renderPass;
+		pipelineInfo.subpass = 0;
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+		pipelineInfo.basePipelineIndex = -1; // Optional
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create graphics pipeline!");
 		}
 
 		// shader module destroy
