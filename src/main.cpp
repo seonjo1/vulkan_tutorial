@@ -728,24 +728,24 @@ private:
 
 	void drawFrame() {
 		// 이전 프레임 작업 기다리기
-		vkWaitForFences(device, 1, &inFlightFence[currentFrame], VK_TRUE, UINT64_MAX);
+		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 		// 펜스 signal 상태 초기화
-		vkResetFences(device, 1, &inFlightFence[currentFrame]);
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
 		// 사용할 이미지 준비 (준비가 끝나면 세마포어에 신호가 옴) 및 이미지 인덱스 받아오기 
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
 		// 커맨드 버퍼에 명령 기록
-		vkResetCommandBuffer(commandBuffer[currentFrame], /*VkCommandBufferResetFlagBits*/ 0);
-		recordCommandBuffer(commandBuffer[currentFrame], imageIndex);
+		vkResetCommandBuffer(commandBuffers[currentFrame], /*VkCommandBufferResetFlagBits*/ 0);
+		recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
 
 		// 명령 버퍼 제출
 		VkSubmitInfo submitInfo{};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
 		// 대기할 세마포어 설정
-		VkSemaphore waitSemaphores[] = {imageAvailableSemaphore[currentFrame]};
+		VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
 		VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT}; 
 		submitInfo.waitSemaphoreCount = 1;
 		submitInfo.pWaitSemaphores = waitSemaphores;
@@ -753,15 +753,15 @@ private:
 
 		// 커맨드 버퍼 등록
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &commandBuffer[currentFrame];
+		submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 
 		// 작업이 완료된 후 시그널 보낼 세마포어 설정
-		VkSemaphore signalSemaphores[] = {renderFinishedSemaphore[currentFrame]};
+		VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = signalSemaphores;
 
 		// 커맨드 버퍼 제출
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence[currentFrame]) != VK_SUCCESS) {
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
 			throw std::runtime_error("failed to submit draw command buffer!");
 		}
 
