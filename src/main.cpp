@@ -107,13 +107,24 @@ private:
 	std::vector<VkFence> inFlightFences;
 	uint32_t currentFrame = 0;
 
+	bool framebufferResized = false;
+
 	void initWindow() {
 		glfwInit();
 
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
 		window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Vulkan", nullptr, nullptr);
+		// window에 현재 HelloTriangleApplication 객체를 바인딩
+		glfwSetWindowUserPointer(window, this);
+		// 프레임버퍼 사이즈 변경 콜백 함수 등록
+		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+	}
+
+	static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+		// window에 바인딩된 객체 호출 및 framebufferResized = true 설정
+		auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+		app->framebufferResized = true;
 	}
 
 	void initVulkan() {
@@ -140,31 +151,38 @@ private:
 		vkDeviceWaitIdle(device);
 	}
 
-	void cleanup() {
+	void cleanupSwapChain() {
+		// 프레임 버퍼 배열 삭제
+		for (auto framebuffer : swapChainFramebuffers) {
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
 
+		// 이미지뷰 삭제
+		for (auto imageView : swapChainImageViews) {
+			vkDestroyImageView(device, imageView, nullptr);
+		}
+		
+		vkDestroySwapchainKHR(device, swapChain, nullptr);         // 스왑 체인 파괴
+	}
+
+	void cleanup() {
+		// 스왑 체인 파괴
+		cleanupSwapChain();
+
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);      // 파이프라인 객체 삭제
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);  // 파이프라인 레이아웃 삭제
+
+		vkDestroyRenderPass(device, renderPass, nullptr);          // 렌더 패스 삭제
+
+		// 세마포어, 펜스 파괴
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
 			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
 			vkDestroyFence(device, inFlightFences[i], nullptr);
 		}
 
-        vkDestroyCommandPool(device, commandPool, nullptr);
+        vkDestroyCommandPool(device, commandPool, nullptr); 	   // 커맨드 풀 파괴
 
-		// 프레임 버퍼 배열 삭제
-		for (auto framebuffer : swapChainFramebuffers) {
-			vkDestroyFramebuffer(device, framebuffer, nullptr);
-		}
-
-		vkDestroyPipeline(device, graphicsPipeline, nullptr);      // 파이프라인 객체 삭제
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);  // 파이프라인 레이아웃 삭제
-		vkDestroyRenderPass(device, renderPass, nullptr);          // 렌더 패스 삭제
-
-		// 이미지뷰 삭제
-		for (auto imageView : swapChainImageViews) {
-			vkDestroyImageView(device, imageView, nullptr);
-		}
-
-		vkDestroySwapchainKHR(device, swapChain, nullptr);         // 스왑 체인 파괴
 		vkDestroyDevice(device, nullptr);                          // 논리적 장치 파괴
 
 		// 메시지 객체 파괴
@@ -178,6 +196,29 @@ private:
 		glfwDestroyWindow(window);                                 // 윈도우 파괴
 
 		glfwTerminate();									       // glfw 종료
+	}
+
+	void recreateSwapChain() {
+		// 현재 프레임버퍼 사이즈 체크
+		int width = 0, height = 0;
+		glfwGetFramebufferSize(window, &width, &height);
+		
+		// 현재 프레임 버퍼 사이즈가 0이면 다음 이벤트 호출까지 대기
+		while (width == 0 || height == 0) {
+			glfwGetFramebufferSize(window, &width, &height);
+			glfwWaitEvents();
+		}
+
+		// 모든 GPU 작업 종료될 때까지 대기 (사용중인 리소스를 건들지 않기 위해)
+		vkDeviceWaitIdle(device);
+
+		// 스왑 체인 관련 리소스 정리
+		cleanupSwapChain();
+
+		// 스왑 체인 관련 리소스 재생성
+		createSwapChain();
+		createImageViews();
+		createFramebuffers();
 	}
 
 	void createInstance() {
@@ -729,12 +770,22 @@ private:
 	void drawFrame() {
 		// 이전 프레임 작업 기다리기
 		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-		// 펜스 signal 상태 초기화
-		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
 		// 사용할 이미지 준비 (준비가 끝나면 세마포어에 신호가 옴) 및 이미지 인덱스 받아오기 
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+			// 스왑 체인이 surface 크기와 호환되지 않는 경우 (창 크기 변경)
+			// 스왑 체인 재생성 후 다시 draw
+			recreateSwapChain();
+			return;
+		} else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+			throw std::runtime_error("failed to acquire swap chain image!");
+		}
+
+		// 펜스 signal 상태 초기화
+		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
 		// 커맨드 버퍼에 명령 기록
 		vkResetCommandBuffer(commandBuffers[currentFrame], /*VkCommandBufferResetFlagBits*/ 0);
@@ -780,8 +831,16 @@ private:
 		presentInfo.pImageIndices = &imageIndex;
 
 		// 프레젠테이션 큐에 이미지 제출
-		vkQueuePresentKHR(presentQueue, &presentInfo);
-	    
+		result = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+			// 스왑 체인 크기와 surface의 크기가 호환되지 않는 경우
+			framebufferResized = false;
+			recreateSwapChain();
+		} else if (result != VK_SUCCESS) {
+			throw std::runtime_error("failed to present swap chain image!");
+		}
+
 		// 프레임 인덱스 증가
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
