@@ -157,6 +157,10 @@ private:
 	VkPipeline graphicsPipeline;
 
 	VkCommandPool commandPool;
+
+	VkBuffer vertexBuffer;
+	VkDeviceMemory vertexBufferMemory;
+
 	std::vector<VkCommandBuffer> commandBuffers;
 
 	std::vector<VkSemaphore> imageAvailableSemaphores;
@@ -200,6 +204,7 @@ private:
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
+		createVertexBuffer();
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -235,11 +240,14 @@ private:
 	void cleanup() {
 		// 스왑 체인 파괴
 		cleanupSwapChain();
+		
+		vkDestroyBuffer(device, vertexBuffer, nullptr);				// 버텍스 버퍼 객체 삭제
+		vkFreeMemory(device, vertexBufferMemory, nullptr);			// 버텍스 버퍼에 할당된 메모리 삭제
 
-		vkDestroyPipeline(device, graphicsPipeline, nullptr);      // 파이프라인 객체 삭제
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);  // 파이프라인 레이아웃 삭제
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);      	// 파이프라인 객체 삭제
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);  	// 파이프라인 레이아웃 삭제
 
-		vkDestroyRenderPass(device, renderPass, nullptr);          // 렌더 패스 삭제
+		vkDestroyRenderPass(device, renderPass, nullptr);         	// 렌더 패스 삭제
 
 		// 세마포어, 펜스 파괴
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -248,21 +256,20 @@ private:
 			vkDestroyFence(device, inFlightFences[i], nullptr);
 		}
 
-        vkDestroyCommandPool(device, commandPool, nullptr); 	   // 커맨드 풀 파괴
+        vkDestroyCommandPool(device, commandPool, nullptr); 	  	// 커맨드 풀 파괴
 
-		vkDestroyDevice(device, nullptr);                          // 논리적 장치 파괴
+		vkDestroyDevice(device, nullptr);                         	// 논리적 장치 파괴
 
 		// 메시지 객체 파괴
 		if (enableValidationLayers) {
 			DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
 		}
 
-		vkDestroySurfaceKHR(instance, surface, nullptr);           // 화면 객체 파괴
-		vkDestroyInstance(instance, nullptr);                      // 인스턴스 파괴
+		vkDestroySurfaceKHR(instance, surface, nullptr);          	// 화면 객체 파괴
+		vkDestroyInstance(instance, nullptr);						// 인스턴스 파괴
 
-		glfwDestroyWindow(window);                                 // 윈도우 파괴
-
-		glfwTerminate();									       // glfw 종료
+		glfwDestroyWindow(window);                              	// 윈도우 파괴
+		glfwTerminate();									        // glfw 종료
 	}
 
 	/*
@@ -848,6 +855,84 @@ private:
 	}
 
 	/*
+		[버텍스 버퍼 생성]
+		1. 버텍스 버퍼 객체 생성
+		2. 버텍스 버퍼 메모리 할당
+		3. 버텍스 버퍼 객체에 할당한 메모리 바인딩
+		4. GPU 버텍스 버퍼 메모리에 정점 정보 입력
+	*/ 
+	void createVertexBuffer() {
+		// 버퍼 객체를 생성하기 위한 구조체 (GPU 메모리에 데이터 저장 공간을 할당하는 데 필요한 설정을 정의)
+		VkBufferCreateInfo bufferInfo{};
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = sizeof(vertices[0]) * vertices.size();	// 버퍼의 크기 지정
+		bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;		// 버퍼의 용도 지정 (현재는 버텍스 버퍼로 지정)
+		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;			// 버퍼를 하나의 큐 패밀리에서 쓸지, 여러 큐 패밀리에서 공유할지 설정 (현재 단일 큐 패밀리에서 사용하도록 설정) 
+																	// 여러 큐 패밀리에서 공유하는 모드 사용시 추가 설정 필요
+		// [버텍스 버퍼 생성]
+		// 버퍼를 생성하지만 할당은 안되어있는 상태로 만들어짐
+		if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create vertex buffer!");
+		}
+
+		// [버퍼에 메모리 할당]
+		// 메모리 할당 요구사항 조회
+		VkMemoryRequirements memRequirements;										// 메모리 할당 요구사항이 기록될 구조체
+		vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);		// GPU 와 buffer 정보에 따른 메모리 할당 요구사항 반환
+
+		// 메모리 할당을 위한 구조체
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;	// 할당할 메모리 크기
+		// 메모리 요구사항 설정
+		// 메모리 유형
+		// 		typeFileter : GPU와 buffer에 호환되는 메모리 유형 모음
+		// 메모리 유형의 속성
+		// 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT  : CPU에서 GPU 메모리에 접근이 가능한 설정
+		// 		VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : CPU에서 GPU 메모리의 값을 수정하면 그 즉시 GPU 메모리와 캐시에 해당 값을 수정하는 설정 
+		//      									  (원래는 CPU에서 GPU 메모리 값을 수정하면 GPU 캐시를 플러쉬하여 다시 캐시에 값을 올리는 형식으로 동작)
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		
+		// 버텍스 버퍼 메모리 할당
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate vertex buffer memory!");
+		}
+
+		// 버퍼 객체에 할당된 메모리를 바인딩 (4번째 매개변수는 할당할 메모리의 offset)
+		vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+		// GPU 메모리에 정점 정보 입력
+		void* data; // GPU 메모리에 매핑될 CPU 메모리 가상 포인터
+		vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data); 	// GPU 메모리에 매핑된 CPU 메모리 포인터 반환 (현재는 버텍스 버퍼 메모리 전부를 매핑)
+		memcpy(data, vertices.data(), (size_t) bufferInfo.size);				// CPU 메모리 포인터는 가상포인터로 data에 정점 정보를 복사하면 GPU에 즉시 반영
+																				// 실제 CPU 메모리에 저장되는게 아닌 CPU 메모리 포인터는 가상 포인터역할만 하고 GPU 메모리에 바로 저장
+																				// 메모리 유형의 속성에 의해 GPU 캐시를 플러쉬할 필요없이 즉시 적용
+																				// VK_MEMORY_PROPERTY_HOST_COHERENT_BIT 속성 덕분
+																				// 만약 해당 속성 없이 플러쉬도 안 하면 GPU에서 변경사항이 바로 적용되지 않음
+		vkUnmapMemory(device, vertexBufferMemory);								// GPU 메모리 매핑 해제
+	}
+
+	/*
+		GPU와 buffer가 호환되는 메모리 유형중 properties에 해당하는 속성들을 갖는 메모리 유형 찾기
+	*/
+	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+		// GPU에서 사용한 메모리 유형을 가져온다.
+		VkPhysicalDeviceMemoryProperties memProperties;
+		vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+			// typeFilter & (1 << i) : GPU의 메모리 유형중 버퍼와 호환되는 것인지 판단
+			// memProperties.memoryTypes[i].propertyFlags & properties : GPU 메모리 유형의 속성이 properties와 일치하는지 판단
+			if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+				// 해당 메모리 유형 반환
+				return i;
+			}
+		}
+
+		throw std::runtime_error("failed to find suitable memory type!");
+	}
+
+	/*
 		[커맨드 버퍼 생성]
 		커맨드 버퍼에 GPU에서 실행할 작업을 전부 기록한뒤 제출한다.
 		GPU는 해당 커맨드 버퍼의 작업을 알아서 실행하고, CPU는 다른 일을 할 수 있게 된다. (병렬 처리)
@@ -913,7 +998,7 @@ private:
 		//	[사용할 그래픽 파이프 라인을 설정하는 명령 기록]
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-		// 뷰포트 설정
+		// 뷰포트 정보 입력
 		VkViewport viewport{};
 		viewport.x = 0.0f;									// 뷰포트의 시작 x 좌표
 		viewport.y = 0.0f;									// 뷰포트의 시작 y 좌표
@@ -923,14 +1008,19 @@ private:
 		viewport.maxDepth = 1.0f;							// 뷰포트의 최대 깊이
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);	// [커맨드 버퍼에 뷰포트 설정 등록]
 
-		// 시저 설정
+		// 시저 정보 입력
 		VkRect2D scissor{};
 		scissor.offset = {0, 0};							// 시저의 시작 좌표
 		scissor.extent = swapChainExtent;					// 시저의 width, height
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);		// [커맨드 버퍼에 시저 설정 등록]
 
+		// 버텍스 정보 입력
+		VkBuffer vertexBuffers[] = {vertexBuffer};			// 버택스 버퍼 객체
+		VkDeviceSize offsets[] = {0};						// 버텍스 버퍼 메모리의 시작 위치 offset
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets); // 커맨드 버퍼에 버텍스 버퍼 바인딩
+
 		// [Drawing 작업을 요청하는 명령 기록]
-		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+		vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0); 
 
 		/*
 			[렌더 패스 종료]
