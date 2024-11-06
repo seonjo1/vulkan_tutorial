@@ -118,9 +118,14 @@ struct Vertex {
 };
 
 const std::vector<Vertex> vertices = {
-	{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+};
+
+const std::vector<uint16_t> indices = {
+    0, 1, 2, 2, 3, 0
 };
 
 class HelloTriangleApplication {
@@ -160,6 +165,8 @@ private:
 
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
+	VkBuffer indexBuffer;
+	VkDeviceMemory indexBufferMemory;
 
 	std::vector<VkCommandBuffer> commandBuffers;
 
@@ -205,6 +212,7 @@ private:
 		createFramebuffers();
 		createCommandPool();
 		createVertexBuffer();
+		createIndexBuffer();
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -240,6 +248,9 @@ private:
 	void cleanup() {
 		// 스왑 체인 파괴
 		cleanupSwapChain();
+
+		vkDestroyBuffer(device, indexBuffer, nullptr);				// 인덱스 버퍼 객체 삭제
+		vkFreeMemory(device, indexBufferMemory, nullptr);			// 인덱스 버퍼에 할당된 메모리 삭제
 		
 		vkDestroyBuffer(device, vertexBuffer, nullptr);				// 버텍스 버퍼 객체 삭제
 		vkFreeMemory(device, vertexBufferMemory, nullptr);			// 버텍스 버퍼에 할당된 메모리 삭제
@@ -863,7 +874,6 @@ private:
 		5. 스테이징 버퍼 리소스 해제
 	*/ 
 	void createVertexBuffer() {
-
 		// 정점 정보 크기		
 		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
@@ -906,6 +916,35 @@ private:
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
+
+	/*
+		[인덱스 버퍼 생성]
+		버텍스 버퍼 생성 과정과 같음
+	*/
+    void createIndexBuffer() {
+        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, indices.data(), (size_t) bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+
+		// [버텍스 버퍼 생성]
+		// 속성)
+		// 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT : 버퍼를 인덱스 데이터를 저장하고 처리하는 용도로 설정.
+		// 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT : GPU 전용 메모리에 데이터를 저장하여, GPU가 최적화된 방식으로 접근할 수 있게 함.
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+
 
 	/*
 		[버퍼 생성]
@@ -1097,8 +1136,11 @@ private:
 		VkDeviceSize offsets[] = {0};						// 버텍스 버퍼 메모리의 시작 위치 offset
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets); // 커맨드 버퍼에 버텍스 버퍼 바인딩
 
+		// 인덱스 정보 입력
+		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16); // 커맨드 버퍼에 인덱스 버퍼 바인딩 (4번째 매개변수 index 데이터 타입 uint16 설정)
+
 		// [Drawing 작업을 요청하는 명령 기록]
-		vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0); 
+		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0); // index로 drawing 하는 명령 기록
 
 		/*
 			[렌더 패스 종료]
