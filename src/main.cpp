@@ -1,6 +1,8 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <glm/glm.hpp>
+
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
@@ -74,6 +76,50 @@ struct SwapChainSupportDetails {
 	VkSurfaceCapabilitiesKHR capabilities;
 	std::vector<VkSurfaceFormatKHR> formats;
 	std::vector<VkPresentModeKHR> presentModes;
+};
+
+
+struct Vertex {
+	glm::vec2 pos;
+	glm::vec3 color;
+
+	// 정점 데이터가 전달되는 방법을 알려주는 구조체 반환하는 함수
+	static VkVertexInputBindingDescription getBindingDescription() {
+		// 파이프라인에 정점 데이터가 전달되는 방법을 알려주는 구조체
+		VkVertexInputBindingDescription bindingDescription{};		
+		bindingDescription.binding = 0;								// 버텍스 바인딩 포인트 (현재 0번에 vertex 정보 바인딩)
+		bindingDescription.stride = sizeof(Vertex);					// 버텍스 1개 단위의 정보 크기
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX; // 정점 데이터 처리 방법
+																	// 1. VK_VERTEX_INPUT_RATE_VERTEX : 정점별로 데이터 처리
+																	// 2. VK_VERTEX_INPUT_RATE_INSTANCE : 인스턴스별로 데이터 처리
+		return bindingDescription;
+	}
+
+	// 정점 속성별 데이터 형식과 위치를 지정하는 구조체 반환하는 함수
+	static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+		// 정점 속성의 데이터 형식과 위치를 지정하는 구조체
+		std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+		// pos 속성 정보 입력
+		attributeDescriptions[0].binding = 0;						// 버텍스 버퍼의 바인딩 포인트
+		attributeDescriptions[0].location = 0;						// 버텍스 셰이더의 어떤 location에 대응되는지 지정
+		attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;	// 저장되는 데이터 형식 (VK_FORMAT_R32G32_SFLOAT = vec3)
+		attributeDescriptions[0].offset = offsetof(Vertex, pos);	// 버텍스 구조체에서 해당 속성이 시작되는 위치
+
+		// color 속성 정보 입력
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+		return attributeDescriptions;
+	}
+};
+
+const std::vector<Vertex> vertices = {
+	{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 };
 
 class HelloTriangleApplication {
@@ -629,11 +675,14 @@ private:
 		// [vertex 정보 설정]
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		// 일단 vertex shader에 정점 정보를 하드코딩 했으니 정점 설명 필요 x
-		vertexInputInfo.vertexBindingDescriptionCount = 0;
-		vertexInputInfo.pVertexBindingDescriptions = nullptr;
-		vertexInputInfo.vertexAttributeDescriptionCount = 0;
-		vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+
+		auto bindingDescription = Vertex::getBindingDescription();												// 정점 바인딩 정보를 가진 구조체
+		auto attributeDescriptions = Vertex::getAttributeDescriptions();										// 정점 속성 정보를 가진 구조체 배열
+
+		vertexInputInfo.vertexBindingDescriptionCount = 1;														// 정점 바인딩 정보 개수
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());	// 정점 속성 정보 개수
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;										// 정점 바인딩 정보
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();							// 정점 속성 정보
 
 		// [input assembly 설정] (그려질 primitive 설정)
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
