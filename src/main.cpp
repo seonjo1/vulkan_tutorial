@@ -89,6 +89,7 @@ struct SwapChainSupportDetails {
 struct Vertex {
 	glm::vec2 pos;
 	glm::vec3 color;
+	glm::vec2 texCoord;
 
 	// 정점 데이터가 전달되는 방법을 알려주는 구조체 반환하는 함수
 	static VkVertexInputBindingDescription getBindingDescription() {
@@ -103,9 +104,9 @@ struct Vertex {
 	}
 
 	// 정점 속성별 데이터 형식과 위치를 지정하는 구조체 반환하는 함수
-	static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
 		// 정점 속성의 데이터 형식과 위치를 지정하는 구조체
-		std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
 
 		// pos 속성 정보 입력
 		attributeDescriptions[0].binding = 0;						// 버텍스 버퍼의 바인딩 포인트
@@ -119,6 +120,12 @@ struct Vertex {
 		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
 		attributeDescriptions[1].offset = offsetof(Vertex, color);
 
+		// texCoord 속성 정보 입력
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
 		return attributeDescriptions;
 	}
 };
@@ -130,10 +137,10 @@ struct UniformBufferObject {
 };
 
 const std::vector<Vertex> vertices = {
-	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
@@ -295,6 +302,7 @@ private:
  
 		vkDestroySampler(device, textureSampler, nullptr);					// 샘플러 삭제
 		vkDestroyImageView(device, textureImageView, nullptr);				// 텍스처 이미지뷰 삭제
+
 		vkDestroyImage(device, textureImage, nullptr);						// 텍스처 객체 삭제
 		vkFreeMemory(device, textureImageMemory, nullptr);					// 텍스처에 할당된 메모리 삭제
         
@@ -382,6 +390,7 @@ private:
 		VkInstanceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 		createInfo.pApplicationInfo = &appInfo;
+
 		std::vector<const char*> extensions = getRequiredExtensions();
 		createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
 		createInfo.ppEnabledExtensionNames = extensions.data();
@@ -686,17 +695,26 @@ private:
 	void createDescriptorSetLayout() {
 		// 셰이더에 바인딩할 리소스의 종류와 바인딩 위치를 설정할 때 쓰이는 구조체
 		VkDescriptorSetLayoutBinding uboLayoutBinding{};
-		uboLayoutBinding.binding = 0;											// 바인딩 위치 지정 (디스크립터 셋 내부의 순서)
-		uboLayoutBinding.descriptorCount = 1;									// 디스크립터의 개수 (구조체는 1개의 디스크립터 취급, 배열 사용시 여러 개 디스크립터 취급)
-		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;	// 디스크립터의 종류 (현재는 Uniform buffer)
-		uboLayoutBinding.pImmutableSamplers = nullptr;							// 변경 불가능한(immutable) 샘플러를 사용할 경우 지정하는 포인터인데 지금은 상관 없음
-		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;				// 사용할 스테이지 지정 (현재는 vertex shader에서 사용하고 여러 스테이지 지정 가능)
+		uboLayoutBinding.binding = 0;														// 바인딩 위치 지정 (디스크립터 셋 내부의 순서)
+		uboLayoutBinding.descriptorCount = 1;												// 디스크립터의 개수 (구조체는 1개의 디스크립터 취급, 배열 사용시 여러 개 디스크립터 취급)
+		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;				// 디스크립터의 종류 (현재는 Uniform buffer)
+		uboLayoutBinding.pImmutableSamplers = nullptr;										// 변경 불가능한(immutable) 샘플러를 사용할 경우 지정하는 포인터인데 지금은 상관 없음
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;							// 사용할 스테이지 지정 (현재는 vertex shader에서 사용하고 여러 스테이지 지정 가능)
 
+		// 디스크립터 셋에 바인딩할 샘플러 설정
+		VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+		samplerLayoutBinding.binding = 1;													// 바인딩 위치 지정
+		samplerLayoutBinding.descriptorCount = 1;											// 디스크립터 개수 지정
+		samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;	// 디스크립터의 종류 (현재 Sampler) 
+		samplerLayoutBinding.pImmutableSamplers = nullptr;									// 샘플러 불변 설정 (현재 False)
+		samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;						// 사용할 스테이지 지정 (Fragment Stage)
+
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};	// 바인딩 정보 2개
 		// 디스크립터 셋 레이아웃을 생성하기 위한 설정 정보를 포함한 구조체
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-		layoutInfo.bindingCount = 1;											// 디스크립터 셋 레이아웃에 포함될 바인딩 정보의 개수
-		layoutInfo.pBindings = &uboLayoutBinding;								// 디스크립터 셋 레이아웃에 포함될 바인딩 정보의 배열
+		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());		// 디스크립터 셋 레이아웃에 포함될 바인딩 정보의 개수
+		layoutInfo.pBindings = bindings.data();									// 디스크립터 셋 레이아웃에 포함될 바인딩 정보의 배열
 
 		// 디스크립터 셋 레이아웃 생성
 		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
@@ -964,6 +982,7 @@ private:
 		textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
 	}
 
+	// 텍스처를 위한 샘플러 생성 함수
 	void createTextureSampler() {
 		// GPU의 속성 정보를 가져오는 함수
 		VkPhysicalDeviceProperties properties{};
@@ -996,14 +1015,14 @@ private:
 		// 이미지 뷰 정보 생성
 		VkImageViewCreateInfo viewInfo{};
 		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		viewInfo.image = image;												// 이미지 핸들
-		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;							// 이미지 타입
-		viewInfo.format = format;											// 이미지 포맷
-		createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;    // 이미지 형식 결정 (color / depth / stencil 등)
-		createInfo.subresourceRange.baseMipLevel = 0;                          // 렌더링할 mipmap 단계 설정
-		createInfo.subresourceRange.levelCount = 1;                            // baseMipLevel 기준으로 몇 개의 MipLevel을 더 사용할지 설정 (실제 mipmap 만드는 건 따로 해줘야함)
-		createInfo.subresourceRange.baseArrayLayer = 0;                        // ImageView가 참조하는 이미지 레이어의 시작 위치 정의
-		createInfo.subresourceRange.layerCount = 1;                            // 스왑 체인에서 설정한 이미지 레이어 개수
+		viewInfo.image = image;													// 이미지 핸들
+		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;								// 이미지 타입
+		viewInfo.format = format;												// 이미지 포맷
+		viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;    	// 이미지 형식 결정 (color / depth / stencil 등)
+		viewInfo.subresourceRange.baseMipLevel = 0;                          	// 렌더링할 mipmap 단계 설정
+		viewInfo.subresourceRange.levelCount = 1;                            	// baseMipLevel 기준으로 몇 개의 MipLevel을 더 사용할지 설정 (실제 mipmap 만드는 건 따로 해줘야함)
+		viewInfo.subresourceRange.baseArrayLayer = 0;                        	// ImageView가 참조하는 이미지 레이어의 시작 위치 정의
+		viewInfo.subresourceRange.layerCount = 1;                            	// 스왑 체인에서 설정한 이미지 레이어 개수
 
 		// 이미지 뷰 생성
 		VkImageView imageView;
@@ -1087,7 +1106,7 @@ private:
 			barrier.srcAccessMask = 0;									// 접근 제한 x
 			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;		// 쓰기 권한 필요
 
-			sourceStage = VK_PIPELINE_STAGE_TOP_OF_P./IPE_BIT;			// Vulkan의 파이프라인에서 가장 상단에 위치한 첫 번째 단계로, 어떠한 작업도 진행되지 않은 상태
+			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;			// Vulkan의 파이프라인에서 가장 상단에 위치한 첫 번째 단계로, 어떠한 작업도 진행되지 않은 상태
 			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;			// 데이터 복사 단계
 		} else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
 			// 이미지 복사가 완료되고 읽기를 수행하기 위해 Fragment shader 작업 대기
@@ -1241,16 +1260,19 @@ private:
 
 	// 디스크립터 풀 생성
 	void createDescriptorPool() {
+		
 		// 디스크립터 풀의 타입별 디스크립터 개수를 설정하는 구조체
-		VkDescriptorPoolSize poolSize{};
-		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;							// 디스크립터 타입
-		poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);		// 디스크립터 개수 (프레임 1개당 디스크립터 1개 할당)
+        std::array<VkDescriptorPoolSize, 2> poolSizes{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;							// 유니폼 버퍼 설정
+        poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);		// 유니폼 버퍼 디스크립터 최대 개수 설정
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;					// 샘플러 설정
+        poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);		// 샘플러 디스크립터 최대 개수 설정
 
 		// 디스크립터 풀을 생성할 때 필요한 설정 정보를 담는 구조체
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-		poolInfo.poolSizeCount = 1;													// 디스크립터 poolSize 구조체 개수
-		poolInfo.pPoolSizes = &poolSize;											// 디스크립터 poolSize 구조체 배열
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());			// 디스크립터 poolSize 구조체 개수
+        poolInfo.pPoolSizes = poolSizes.data();										// 디스크립터 poolSize 구조체 배열
 		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);				// 풀에 존재할 수 있는 총 디스크립터 셋 개수
 
 		// 디스크립터 풀 생성
@@ -1286,18 +1308,32 @@ private:
 			bufferInfo.offset = 0;												// 버퍼에서 데이터 시작 위치 offset
 			bufferInfo.range = sizeof(UniformBufferObject);						// 셰이더가 접근할 버퍼 크기
 
+            VkDescriptorImageInfo imageInfo{};								
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;	// 이미지의 레이아웃
+            imageInfo.imageView = textureImageView;								// 셰이더에서 사용할 이미지 뷰
+            imageInfo.sampler = textureSampler;									// 이미지 샘플링에 사용할 샘플러 설정
+
 			// 디스크립터 셋 바인딩 및 업데이트
-			VkWriteDescriptorSet descriptorWrite{};
-			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrite.dstSet = descriptorSets[i];							// 업데이트 할 디스크립터 셋
-			descriptorWrite.dstBinding = 0;										// 업데이트 할 바인딩 포인트
-			descriptorWrite.dstArrayElement = 0;								// 업데이트 할 디스크립터가 배열 타입인 경우 해당 배열의 원하는 index 부터 업데이트 가능 (배열 아니면 0으로 지정)
-			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;	// 업데이트 할 디스크립터 타입
-			descriptorWrite.descriptorCount = 1;								// 업데이트 할 디스크립터 개수
-			descriptorWrite.pBufferInfo = &bufferInfo;							// 업데이트 할 버퍼 디스크립터 정보 구조체 배열
+			std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[0].dstSet = descriptorSets[i];										// 업데이트 할 디스크립터 셋
+			descriptorWrites[0].dstBinding = 0;													// 업데이트 할 바인딩 포인트
+			descriptorWrites[0].dstArrayElement = 0;											// 업데이트 할 디스크립터가 배열 타입인 경우 해당 배열의 원하는 index 부터 업데이트 가능 (배열 아니면 0으로 지정)
+			descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;				// 업데이트 할 디스크립터 타입
+			descriptorWrites[0].descriptorCount = 1;											// 업데이트 할 디스크립터 개수
+			descriptorWrites[0].pBufferInfo = &bufferInfo;										// 업데이트 할 버퍼 디스크립터 정보 구조체 배열
+
+			descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[1].dstSet = descriptorSets[i];										// 업데이트 할 디스크립터 셋
+			descriptorWrites[1].dstBinding = 1;													// 업데이트 할 바인딩 포인트
+			descriptorWrites[1].dstArrayElement = 0;											// 업데이트 할 디스크립터가 배열 타입인 경우 해당 배열의 원하는 index 부터 업데이트 가능 (배열 아니면 0으로 지정)
+			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;		// 업데이트 할 디스크립터 타입
+			descriptorWrites[1].descriptorCount = 1;											// 업데이트 할 디스크립터 개수
+			descriptorWrites[1].pImageInfo = &imageInfo;										// 업데이트 할 버퍼 디스크립터 정보 구조체 배열	
 
 			// 디스크립터 셋을 업데이트 하여 사용할 리소스 바인딩
-			vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 		}
 	}
 
