@@ -1,12 +1,15 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
 #include <algorithm>
+#include <chrono>
 #include <vector>
 #include <cstring>
 #include <cstdlib>
@@ -26,7 +29,7 @@ const std::vector<const char*> validationLayers = {
 
 // 스왑 체인 확장
 const std::vector<const char*> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
 // 디버그 모드시 검증 레이어 사용
@@ -64,12 +67,12 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 
 // 큐 패밀리 인덱스 관리 구조체
 struct QueueFamilyIndices {
-    std::optional<uint32_t> graphicsFamily;
-    std::optional<uint32_t> presentFamily;
+	std::optional<uint32_t> graphicsFamily;
+	std::optional<uint32_t> presentFamily;
 
-    bool isComplete() {
-        return graphicsFamily.has_value() && presentFamily.has_value();
-    }
+	bool isComplete() {
+		return graphicsFamily.has_value() && presentFamily.has_value();
+	}
 };
 
 // GPU와 surface가 지원하는 SwapChain 지원 세부 정보 구조체
@@ -117,15 +120,21 @@ struct Vertex {
 	}
 };
 
+struct UniformBufferObject {
+	alignas(16) glm::mat4 model;
+	alignas(16) glm::mat4 view;
+	alignas(16) glm::mat4 proj;
+};
+
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0
+	0, 1, 2, 2, 3, 0
 };
 
 class HelloTriangleApplication {
@@ -158,6 +167,7 @@ private:
 	std::vector<VkFramebuffer> swapChainFramebuffers;
 
 	VkRenderPass renderPass;
+	VkDescriptorSetLayout descriptorSetLayout;
 	VkPipelineLayout pipelineLayout;
 	VkPipeline graphicsPipeline;
 
@@ -168,6 +178,13 @@ private:
 	VkBuffer indexBuffer;
 	VkDeviceMemory indexBufferMemory;
 
+	std::vector<VkBuffer> uniformBuffers;
+	std::vector<VkDeviceMemory> uniformBuffersMemory;
+	std::vector<void*> uniformBuffersMapped;
+
+	VkDescriptorPool descriptorPool;
+	std::vector<VkDescriptorSet> descriptorSets;
+	
 	std::vector<VkCommandBuffer> commandBuffers;
 
 	std::vector<VkSemaphore> imageAvailableSemaphores;
@@ -208,11 +225,15 @@ private:
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
+		createDescriptorSetLayout();
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
 		createVertexBuffer();
 		createIndexBuffer();
+		createUniformBuffers();		
+		createDescriptorPool();
+		createDescriptorSets();
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -249,16 +270,24 @@ private:
 		// 스왑 체인 파괴
 		cleanupSwapChain();
 
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);      	// 파이프라인 객체 삭제
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);  	// 파이프라인 레이아웃 삭제
+		vkDestroyRenderPass(device, renderPass, nullptr);         	// 렌더 패스 삭제
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			// 매핑된 거 해제 안하나?????????????????????
+            vkDestroyBuffer(device, uniformBuffers[i], nullptr);	// 유니폼 버퍼 객체 삭제
+            vkFreeMemory(device, uniformBuffersMemory[i], nullptr);	// 유니폼 버퍼에 할당된 메모리 삭제
+        }
+
+		vkDestroyDescriptorPool(device, descriptorPool, nullptr);			// 디스크립터 풀 삭제
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);	// 디스크립터 셋 레이아수 삭제
+
 		vkDestroyBuffer(device, indexBuffer, nullptr);				// 인덱스 버퍼 객체 삭제
 		vkFreeMemory(device, indexBufferMemory, nullptr);			// 인덱스 버퍼에 할당된 메모리 삭제
 		
 		vkDestroyBuffer(device, vertexBuffer, nullptr);				// 버텍스 버퍼 객체 삭제
 		vkFreeMemory(device, vertexBufferMemory, nullptr);			// 버텍스 버퍼에 할당된 메모리 삭제
-
-		vkDestroyPipeline(device, graphicsPipeline, nullptr);      	// 파이프라인 객체 삭제
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);  	// 파이프라인 레이아웃 삭제
-
-		vkDestroyRenderPass(device, renderPass, nullptr);         	// 렌더 패스 삭제
 
 		// 세마포어, 펜스 파괴
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -267,7 +296,7 @@ private:
 			vkDestroyFence(device, inFlightFences[i], nullptr);
 		}
 
-        vkDestroyCommandPool(device, commandPool, nullptr); 	  	// 커맨드 풀 파괴
+		vkDestroyCommandPool(device, commandPool, nullptr); 	  	// 커맨드 풀 파괴
 
 		vkDestroyDevice(device, nullptr);                         	// 논리적 장치 파괴
 
@@ -341,7 +370,7 @@ private:
 		createInfo.ppEnabledExtensionNames = extensions.data();
 	
 		// 디버깅 메시지 객체 생성을 위한 정보 구조체
-	    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
+		VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
 
 		if (enableValidationLayers) {
 			// 디버그 모드시 구조체에 검증 레이어 포함
@@ -349,11 +378,11 @@ private:
 			createInfo.ppEnabledLayerNames = validationLayers.data();
 			// 인스턴스 생성 및 파괴시에도 검증 가능
 			populateDebugMessengerCreateInfo(debugCreateInfo);
-	        createInfo.pNext = reinterpret_cast<VkDebugUtilsMessengerCreateInfoEXT*>(&debugCreateInfo);
+			createInfo.pNext = reinterpret_cast<VkDebugUtilsMessengerCreateInfoEXT*>(&debugCreateInfo);
 		} else {
 			// 디버그 모드 아닐 시 검증 레이어 x
 			createInfo.enabledLayerCount = 0;		
-	        createInfo.pNext = nullptr;
+			createInfo.pNext = nullptr;
 		}
 
 		// 인스턴스 생성
@@ -460,7 +489,7 @@ private:
 
 		// 확장 설정
 		createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+		createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 		
 		// 구버전 호환을 위해 디버그 모드일 경우
 		// 검증 레이어를 포함 시키지만, 현대 시스템에서는 논리적 장치의 레이어를 안 씀
@@ -654,6 +683,32 @@ private:
 		}
 	}
 
+	/* 
+		[디스크립터 셋 레이아웃 생성]
+		디스크립터 셋 레이아웃이란? 
+		셰이더가 사용할 리소스의 타입과 바인딩 위치를 사전에 정의하는 객체
+	*/
+	void createDescriptorSetLayout() {
+		// 셰이더에 바인딩할 리소스의 종류와 바인딩 위치를 설정할 때 쓰이는 구조체
+		VkDescriptorSetLayoutBinding uboLayoutBinding{};
+		uboLayoutBinding.binding = 0;											// 바인딩 위치 지정 (디스크립터 셋 내부의 순서)
+		uboLayoutBinding.descriptorCount = 1;									// 디스크립터의 개수 (구조체는 1개의 디스크립터 취급, 배열 사용시 여러 개 디스크립터 취급)
+		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;	// 디스크립터의 종류 (현재는 Uniform buffer)
+		uboLayoutBinding.pImmutableSamplers = nullptr;							// 변경 불가능한(immutable) 샘플러를 사용할 경우 지정하는 포인터인데 지금은 상관 없음
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;				// 사용할 스테이지 지정 (현재는 vertex shader에서 사용하고 여러 스테이지 지정 가능)
+
+		// 디스크립터 셋 레이아웃을 생성하기 위한 설정 정보를 포함한 구조체
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 1;											// 디스크립터 셋 레이아웃에 포함될 바인딩 정보의 개수
+		layoutInfo.pBindings = &uboLayoutBinding;								// 디스크립터 셋 레이아웃에 포함될 바인딩 정보의 배열
+
+		// 디스크립터 셋 레이아웃 생성
+		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create descriptor set layout!");
+		}
+	}
+
 	/*
 	[파이프라인 객체 생성]
 	파이프라인 객체는 GPU가 그래픽 또는 컴퓨팅 명령을 실행할 때 필요한 설정을 제공한다.
@@ -722,24 +777,24 @@ private:
 		viewportState.scissorCount = 1;  // 사용할 시저의수
 
 		// [rasterizer 설정]
-        VkPipelineRasterizationStateCreateInfo rasterizer{};
-        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterizer.depthClampEnable = VK_FALSE;  		// VK_FALSE로 설정시 depth clamping이 적용되지 않아 0.0f ~ 1.0f 범위 밖의 프레그먼트는 삭제됨
-        rasterizer.rasterizerDiscardEnable = VK_FALSE;  // rasterization 진행 여부 결정, VK_TRUE시 렌더링 진행 x
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;  // 다각형 그리는 방법 선택 (점만, 윤곽선만, 기본 값 등)
-        rasterizer.lineWidth = 1.0f;					// 선의 굵기 설정 
-        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;	// cull 모드 설정 (앞면 혹은 뒷면은 그리지 않는 설정 가능)
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;	// 앞면의 기준 설정 (정점의 방향이 시계방향인지 반시계방향인지를 통해 앞면 판단)
-        rasterizer.depthBiasEnable = VK_FALSE;			// depth에 bias를 설정하여 z-fighting 해결할 수 있음 (원근 투영시 멀어질 수록 z값의 차이가 미미해짐)
-														// VK_TRUE일 경우 추가 설정 필요
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;  				// VK_FALSE로 설정시 depth clamping이 적용되지 않아 0.0f ~ 1.0f 범위 밖의 프레그먼트는 삭제됨
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;  		// rasterization 진행 여부 결정, VK_TRUE시 렌더링 진행 x
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;  		// 다각형 그리는 방법 선택 (점만, 윤곽선만, 기본 값 등)
+		rasterizer.lineWidth = 1.0f;							// 선의 굵기 설정 
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;			// cull 모드 설정 (앞면 혹은 뒷면은 그리지 않는 설정 가능)
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;	// 앞면의 기준 설정 (y축 반전에 의해 정점이 시계 반대방향으로 그려지므로 앞면을 시계 반대방향으로 설정)
+		rasterizer.depthBiasEnable = VK_FALSE;					// depth에 bias를 설정하여 z-fighting 해결할 수 있음 (원근 투영시 멀어질 수록 z값의 차이가 미미해짐)
+																// VK_TRUE일 경우 추가 설정 필요
 
 		// [멀티 샘플링 설정]
 		VkPipelineMultisampleStateCreateInfo multisampling{};
-        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisampling.sampleShadingEnable = VK_FALSE; // 샘플 기준 셰이딩 false 
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE; // 샘플 기준 셰이딩 false 
 													  // VK_TRUE: 프레그먼트 셰이더 단계(음영 계산)부터 샘플별로 계산 후 최종 결과 평균내서 사용 
 													  // VK_FALSE: 테스트&블랜딩 단계부터 샘플별로 계산 후 최종 결과 평균내서 사용 (음영 계산은 동일한 값) 
-        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // 픽셀당 샘플 개수 설정
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // 픽셀당 샘플 개수 설정
 
 		// [블랜딩 설정]
 		// attachment 별 블랜딩 설정 (블랜딩 + 프레임 버퍼 기록 설정)
@@ -776,8 +831,8 @@ private:
 		// [파이프라인 레이아웃 생성]
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipelineLayoutInfo.setLayoutCount = 0;  // 디스크립터 셋 레이아웃(텍스처 샘플러, 유니폼 버퍼 등) 0개
-		pipelineLayoutInfo.pushConstantRangeCount = 0; // 푸시 상수 0개
+		pipelineLayoutInfo.setLayoutCount = 1; 									// 디스크립터 셋 레이아웃 개수
+		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout; 					// 디스크립투 셋 레이아웃
 
 		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create pipeline layout!");
@@ -830,12 +885,12 @@ private:
 
 			VkFramebufferCreateInfo framebufferInfo{};
 			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-			framebufferInfo.renderPass = renderPass; // 렌더 패스 등록
-			framebufferInfo.attachmentCount = 1; // attachment 개수
-			framebufferInfo.pAttachments = attachments;
-			framebufferInfo.width = swapChainExtent.width;
-			framebufferInfo.height = swapChainExtent.height;
-			framebufferInfo.layers = 1;
+			framebufferInfo.renderPass = renderPass; 							// 렌더 패스 등록
+			framebufferInfo.attachmentCount = 1; 								// attachment 개수
+			framebufferInfo.pAttachments = attachments;							// attachment 등록
+			framebufferInfo.width = swapChainExtent.width;						// 프레임 버퍼 width
+			framebufferInfo.height = swapChainExtent.height;					// 프레임 버퍼 height
+			framebufferInfo.layers = 1;											// 레이어 수
 
 			if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
 				throw std::runtime_error("failed to create framebuffer!");
@@ -878,8 +933,8 @@ private:
 		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
 		// 스테이징 버퍼 객체, 스테이징 버퍼 메모리 객체 생성
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
 
 		// [스테이징 버퍼 생성]
 		// 용도)
@@ -888,7 +943,7 @@ private:
 		// 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT  : CPU에서 GPU 메모리에 접근이 가능한 설정
 		// 		VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : CPU에서 GPU 메모리의 값을 수정하면 그 즉시 GPU 메모리와 캐시에 해당 값을 수정하는 설정 
 		//      									  (원래는 CPU에서 GPU 메모리 값을 수정하면 GPU 캐시를 플러쉬하여 다시 캐시에 값을 올리는 형식으로 동작)
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
 		// [스테이징 버퍼(GPU 메모리)에 정점 정보 입력]
 		void* data; // GPU 메모리에 매핑될 CPU 메모리 가상 포인터
@@ -907,44 +962,123 @@ private:
 		// 속성)
 		// 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : 버퍼를 정점 데이터를 저장하고 처리하는 용도로 설정.
 		// 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT : GPU 전용 메모리에 데이터를 저장하여, GPU가 최적화된 방식으로 접근할 수 있게 함.
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
 
 		// [스테이징 버퍼에서 버텍스 버퍼로 메모리 이동]
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+		copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
 
 		// 스테이징 버퍼와 할당된 메모리 해제
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
 	/*
 		[인덱스 버퍼 생성]
 		버텍스 버퍼 생성 과정과 같음
 	*/
-    void createIndexBuffer() {
-        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+	void createIndexBuffer() {
+		VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
 		memcpy(data, indices.data(), (size_t) bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
+		vkUnmapMemory(device, stagingBufferMemory);
 
 		// [버텍스 버퍼 생성]
 		// 속성)
 		// 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT : 버퍼를 인덱스 데이터를 저장하고 처리하는 용도로 설정.
 		// 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT : GPU 전용 메모리에 데이터를 저장하여, GPU가 최적화된 방식으로 접근할 수 있게 함.
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
 
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+		copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-    }
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
 
+	// 유니폼 버퍼 생성
+	void createUniformBuffers() {
+		// 유니폼 버퍼에 저장 될 구조체의 크기
+		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+		// 각 요소들을 동시에 처리 가능한 최대 프레임 수만큼 만들어 둔다.
+		uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);		// 유니폼 버퍼 객체
+		uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);	// 유니폼 버퍼에 할당할 메모리
+		uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);	// GPU 메모리에 매핑할 CPU 메모리 포인터
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			// 유니폼 버퍼 객체 생성 + 메모리 할당 + 바인딩
+			createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+			// GPU 메모리 CPU 가상 포인터에 매핑
+			vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+		}
+	}
+
+	// 디스크립터 풀 생성
+	void createDescriptorPool() {
+		// 디스크립터 풀의 타입별 디스크립터 개수를 설정하는 구조체
+		VkDescriptorPoolSize poolSize{};
+		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;							// 디스크립터 타입
+		poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);		// 디스크립터 개수 (프레임 1개당 디스크립터 1개 할당)
+
+		// 디스크립터 풀을 생성할 때 필요한 설정 정보를 담는 구조체
+		VkDescriptorPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		poolInfo.poolSizeCount = 1;													// 디스크립터 poolSize 구조체 개수
+		poolInfo.pPoolSizes = &poolSize;											// 디스크립터 poolSize 구조체 배열
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);				// 풀에 존재할 수 있는 총 디스크립터 셋 개수
+
+		// 디스크립터 풀 생성
+		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create descriptor pool!");
+		}
+	}
+
+	// 디스크립터 셋 할당 및 업데이트 하여 리소스 바인딩
+	void createDescriptorSets() {
+		// 디스크립터 셋 레이아웃 벡터 생성 (기존 만들어놨던 디스크립터 셋 레이아웃 객체 이용)
+		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
+
+		// 디스크립터 셋 할당에 필요한 정보를 설정하는 구조체
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = descriptorPool;										// 디스크립터 셋을 할당할 디스크립터 풀 지정
+		allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);		// 할당할 디스크립터 셋 개수 지정
+		allocInfo.pSetLayouts = layouts.data();											// 할당할 디스크립터 셋 의 레이아웃을 정의하는 배열 
+
+		descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);									// 디스크립터 셋을 저장할 벡터 크기 설정
+		
+		// 디스크립터 풀에 디스크립터 셋 할당
+		if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate descriptor sets!");
+		}
+
+		// 디스크립터 셋마다 디스크립터 설정 진행
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			// 디스크립터 셋에 바인딩할 버퍼 정보 
+			VkDescriptorBufferInfo bufferInfo{};
+			bufferInfo.buffer = uniformBuffers[i];								// 바인딩할 버퍼
+			bufferInfo.offset = 0;												// 버퍼에서 데이터 시작 위치 offset
+			bufferInfo.range = sizeof(UniformBufferObject);						// 셰이더가 접근할 버퍼 크기
+
+			// 디스크립터 셋 바인딩 및 업데이트
+			VkWriteDescriptorSet descriptorWrite{};
+			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrite.dstSet = descriptorSets[i];							// 업데이트 할 디스크립터 셋
+			descriptorWrite.dstBinding = 0;										// 업데이트 할 바인딩 포인트
+			descriptorWrite.dstArrayElement = 0;								// 업데이트 할 디스크립터가 배열 타입인 경우 해당 배열의 원하는 index 부터 업데이트 가능 (배열 아니면 0으로 지정)
+			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;	// 업데이트 할 디스크립터 타입
+			descriptorWrite.descriptorCount = 1;								// 업데이트 할 디스크립터 개수
+			descriptorWrite.pBufferInfo = &bufferInfo;							// 업데이트 할 버퍼 디스크립터 정보 구조체 배열
+
+			// 디스크립터 셋을 업데이트 하여 사용할 리소스 바인딩
+			vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+		}
+	}
 
 	/*
 		[버퍼 생성]
@@ -952,82 +1086,82 @@ private:
 		2. 버퍼 메모리 할당
 		3. 버퍼 객체에 할당한 메모리 바인딩
 	*/ 
-    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
 		// 버퍼 객체를 생성하기 위한 구조체 (GPU 메모리에 데이터 저장 공간을 할당하는 데 필요한 설정을 정의)
-	    VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = size;										// 버퍼의 크기 지정
-        bufferInfo.usage = usage;									// 버퍼의 용도 지정
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;			// 버퍼를 하나의 큐 패밀리에서 쓸지, 여러 큐 패밀리에서 공유할지 설정 (현재 단일 큐 패밀리에서 사용하도록 설정)
+		VkBufferCreateInfo bufferInfo{};
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = size;										// 버퍼의 크기 지정
+		bufferInfo.usage = usage;									// 버퍼의 용도 지정
+		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;			// 버퍼를 하나의 큐 패밀리에서 쓸지, 여러 큐 패밀리에서 공유할지 설정 (현재 단일 큐 패밀리에서 사용하도록 설정)
 																	// 여러 큐 패밀리에서 공유하는 모드 사용시 추가 설정 필요
 		// [버퍼 생성]
 		// 버퍼를 생성하지만 할당은 안되어있는 상태로 만들어짐       
-	    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create buffer!");
-        }
+		if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create buffer!");
+		}
 
 		// [버퍼에 메모리 할당]
 		// 메모리 할당 요구사항 조회
-        VkMemoryRequirements memRequirements;
-        vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+		VkMemoryRequirements memRequirements;
+		vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
 
 		// 메모리 할당을 위한 구조체
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;	// 할당할 메모리 크기
-        // 메모리 요구사항 설정 (GPU 메모리 유형 중 buffer와 호환되고 properties 속성들과 일치하는 것 찾아 저장)
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;	// 할당할 메모리 크기
+		// 메모리 요구사항 설정 (GPU 메모리 유형 중 buffer와 호환되고 properties 속성들과 일치하는 것 찾아 저장)
 		// 메모리 유형 - GPU 메모리는 구역마다 유형이 다르다. (memoryTypeBits는 buffer가 호환되는 GPU의 메모리 유형이 전부 담겨있음)
 		// 메모리 유형의 속성 - 메모리 유형마다 특성을 가지고 있음
 		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
 		// 버퍼 메모리 할당
-        if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate buffer memory!");
-        }
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate buffer memory!");
+		}
 
 		// 버퍼 객체에 할당된 메모리를 바인딩 (4번째 매개변수는 할당할 메모리의 offset)
-        vkBindBufferMemory(device, buffer, bufferMemory, 0);
-    }
+		vkBindBufferMemory(device, buffer, bufferMemory, 0);
+	}
 
 	// srcBuffer 에서 dstBuffer 로 데이터 복사
-    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
-        // 커맨드 버퍼 할당을 위한 구조체 
+	void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+		// 커맨드 버퍼 할당을 위한 구조체 
 		VkCommandBufferAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandPool = commandPool;	// 커맨드 풀 지정
-        allocInfo.commandBufferCount = 1;		// 커맨드 버퍼 개수
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandPool = commandPool;	// 커맨드 풀 지정
+		allocInfo.commandBufferCount = 1;		// 커맨드 버퍼 개수
 
 		// 커맨드 버퍼 생성
-        VkCommandBuffer commandBuffer;
-        vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+		VkCommandBuffer commandBuffer;
+		vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
 
 		// 커맨드 버퍼 기록을 위한 정보 객체
-        VkCommandBufferBeginInfo beginInfo{};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;  // 커맨드 버퍼를 1번만 제출
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;  // 커맨드 버퍼를 1번만 제출
 
 		// GPU에 필요한 작업을 모두 커맨드 버퍼에 기록하기 시작
-        vkBeginCommandBuffer(commandBuffer, &beginInfo);
+		vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
 		VkBufferCopy copyRegion{}; 	// 복사할 버퍼 영역을 지정 (크기, src 와 dst의 시작 offset 등)
 		copyRegion.size = size;		// 복사할 버퍼 크기 설정
 		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion); // 커맨드 버퍼에 복사 명령 기록
 
 		// 커맨드 버퍼 기록 중지
-        vkEndCommandBuffer(commandBuffer);
+		vkEndCommandBuffer(commandBuffer);
 
 		// 복사 커맨드 버퍼 제출 정보 객체 생성
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitInfo.commandBufferCount = 1;								// 커맨드 버퍼 개수
-        submitInfo.pCommandBuffers = &commandBuffer;					// 커맨드 버퍼 등록
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.commandBufferCount = 1;								// 커맨드 버퍼 개수
+		submitInfo.pCommandBuffers = &commandBuffer;					// 커맨드 버퍼 등록
 
-        vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);	// 커맨드 버퍼 큐에 제출
-        vkQueueWaitIdle(graphicsQueue);									// 그래픽스 큐 작업 종료 대기
+		vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);	// 커맨드 버퍼 큐에 제출
+		vkQueueWaitIdle(graphicsQueue);									// 그래픽스 큐 작업 종료 대기
 
-        vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);	// 커맨드 버퍼 제거
-    }
+		vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);	// 커맨드 버퍼 제거
+	}
 
 	/*
 		GPU와 buffer가 호환되는 메모리 유형중 properties에 해당하는 속성들을 갖는 메모리 유형 찾기
@@ -1063,7 +1197,7 @@ private:
 		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 		allocInfo.commandPool = commandPool; 								// 커맨드 풀 등록
 		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;					// 큐에 직접 제출할 수 있는 커맨드 버퍼 설정
-        allocInfo.commandBufferCount = (uint32_t) commandBuffers.size(); 	// 할당할 커맨드 버퍼의 개수
+		allocInfo.commandBufferCount = (uint32_t) commandBuffers.size(); 	// 할당할 커맨드 버퍼의 개수
 
 		// 커맨드 버퍼 할당
 		if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
@@ -1139,6 +1273,9 @@ private:
 		// 인덱스 정보 입력
 		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16); // 커맨드 버퍼에 인덱스 버퍼 바인딩 (4번째 매개변수 index 데이터 타입 uint16 설정)
 
+		// 디스크립터 셋을 커맨드 버퍼에 바인딩
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+
 		// [Drawing 작업을 요청하는 명령 기록]
 		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0); // index로 drawing 하는 명령 기록
 
@@ -1186,6 +1323,25 @@ private:
 		}
 	}
 
+	// Uniform 변수에 해당하는 값을 구한 후 매핑된 GPU 메모리에 복사
+    void updateUniformBuffer(uint32_t currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+		// 이번 프레임의 유니폼 변수 값 구하기
+		// 1초에 90도씩 회전하는 model view projection 변환 생성
+        UniformBufferObject ubo{};
+        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 10.0f);
+        ubo.proj[1][1] *= -1;
+
+		// 유니폼 변수를 매핑된 GPU 메모리에 복사
+        memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+    }
+
 	/*
 		[다중 Frame 방식으로 그리기]
 		동시에 작업 가능한 최대 Frame 개수만큼 자원을 생성하여 사용 (semaphore, fence, commandBuffer)
@@ -1213,6 +1369,9 @@ private:
 			// 진짜 오류 gg
 			throw std::runtime_error("failed to acquire swap chain image!");
 		}
+
+		// Uniform buffer 업데이트
+		updateUniformBuffer(currentFrame);
 
 		// [Fence 초기화]
 		// Fence signal 상태 not signaled 로 초기화
