@@ -5,6 +5,8 @@
 #include <stb/stb_image.h>
 
 #define GLM_FORCE_RADIANS
+// GLM에서는 보통 -1.0 ~ 1.0 범위로 원근 투영 행렬을 사용하므로 0.0 ~ 1.0 범위로 한다는 설정 적용
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -87,7 +89,7 @@ struct SwapChainSupportDetails {
 
 
 struct Vertex {
-	glm::vec2 pos;
+	glm::vec3 pos;
 	glm::vec3 color;
 	glm::vec2 texCoord;
 
@@ -109,10 +111,10 @@ struct Vertex {
 		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
 
 		// pos 속성 정보 입력
-		attributeDescriptions[0].binding = 0;						// 버텍스 버퍼의 바인딩 포인트
-		attributeDescriptions[0].location = 0;						// 버텍스 셰이더의 어떤 location에 대응되는지 지정
-		attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;	// 저장되는 데이터 형식 (VK_FORMAT_R32G32_SFLOAT = vec3)
-		attributeDescriptions[0].offset = offsetof(Vertex, pos);	// 버텍스 구조체에서 해당 속성이 시작되는 위치
+		attributeDescriptions[0].binding = 0;							// 버텍스 버퍼의 바인딩 포인트
+		attributeDescriptions[0].location = 0;							// 버텍스 셰이더의 어떤 location에 대응되는지 지정
+		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;	// 저장되는 데이터 형식 (VK_FORMAT_R32G32B32_SFLOAT = vec3)
+		attributeDescriptions[0].offset = offsetof(Vertex, pos);		// 버텍스 구조체에서 해당 속성이 시작되는 위치
 
 		// color 속성 정보 입력
 		attributeDescriptions[1].binding = 0;
@@ -137,14 +139,20 @@ struct UniformBufferObject {
 };
 
 const std::vector<Vertex> vertices = {
-	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+
+    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
-	0, 1, 2, 2, 3, 0
+    0, 1, 2, 2, 3, 0,
+    4, 5, 6, 6, 7, 4
 };
 
 class HelloTriangleApplication {
@@ -182,6 +190,10 @@ private:
 	VkPipeline graphicsPipeline;
 
 	VkCommandPool commandPool;
+
+	VkImage depthImage;
+	VkDeviceMemory depthImageMemory;
+	VkImageView depthImageView;
 
 	VkImage textureImage;
 	VkDeviceMemory textureImageMemory;
@@ -242,8 +254,9 @@ private:
 		createRenderPass();
 		createDescriptorSetLayout();
 		createGraphicsPipeline();
-		createFramebuffers();
 		createCommandPool();
+		createDepthResources();
+		createFramebuffers();	
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
@@ -269,6 +282,11 @@ private:
 
 	// FrameBuffer, ImageView, SwapChain 삭제
 	void cleanupSwapChain() {
+		// 깊이 버퍼 이미지, 이미지 뷰, 메모리 삭제 
+        vkDestroyImageView(device, depthImageView, nullptr);
+        vkDestroyImage(device, depthImage, nullptr);
+        vkFreeMemory(device, depthImageMemory, nullptr);
+		
 		// 프레임 버퍼 배열 삭제
 		for (auto framebuffer : swapChainFramebuffers) {
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -357,9 +375,10 @@ private:
 		// 스왑 체인 관련 리소스 정리
 		cleanupSwapChain();
 
-		// 현재 window 크기에 맞게 SwapChain, ImageView, FrameBuffer 재생성
+		// 현재 window 크기에 맞게 SwapChain, DepthResource, ImageView, FrameBuffer 재생성
 		createSwapChain();
 		createImageViews();
+		createDepthResources();
 		createFramebuffers();
 	}
 
@@ -638,7 +657,7 @@ private:
 
 		// 이미지의 개수만큼 이미지뷰 생성
 		for (size_t i = 0; i < swapChainImages.size(); i++) {
-			swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
+			swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT);
 		}
 	}
 
@@ -661,26 +680,59 @@ private:
 		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; 				// 초기 레이아웃 설정을 UNDEFINED로 설정 (초기 데이터 가공을 하지 않기 때문에 가장 빠름)
 		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; 			// 최종 레이아웃 화면 출력용으로 설정
 
+		// depth attachment 설정
+		VkAttachmentDescription depthAttachment{};
+		depthAttachment.format = findDepthFormat();
+		depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;						// 초기 레이아웃 설정을 UNDEFINED로 설정
+		depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL; // 최종 레이아웃 depth-stencil buffer로 사용
+
 		// subpass가 attachment 설정 어떤 것을 어떻게 참조할지 정의
 		VkAttachmentReference colorAttachmentRef{};
 		colorAttachmentRef.attachment = 0; 										// 특정 attachment 설정의 index
 		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;	// attachment 설정을 subpass 내에서
 																				// 어떤 layout으로 쓸지 결정 (현재는 color attachment로 사용하는 설정)
+		VkAttachmentReference depthAttachmentRef{};
+		depthAttachmentRef.attachment = 1;
+		depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
 
 		// [subpass 정의]
 		VkSubpassDescription subpass{};
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 		subpass.colorAttachmentCount = 1; 										// attachment 설정 개수 등록
-		subpass.pColorAttachments = &colorAttachmentRef;						// attachment 설정 등록
+		subpass.pColorAttachments = &colorAttachmentRef;						// color attachment 등록
+		subpass.pDepthStencilAttachment = &depthAttachmentRef;					// depth attachment 등록
+
+		// [subpass 종속성 설정]
+		// 렌더패스 외부 작업(srcSubpass)과 0번 서브패스(dstSubpass) 간의 동기화 설정.
+		VkSubpassDependency dependency{};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;	// 렌더패스 외부 작업(이전 프레임 처리 또는 렌더패스 외부의 GPU 작업)
+		dependency.dstSubpass = 0;					 	// 첫 번째 서브패스(0번 서브패스)에 종속
+		// srcStageMask: 동기화를 기다릴 렌더패스 외부 작업의 파이프라인 단계
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;	// 색상 첨부물 출력 단계 | 프래그먼트 테스트의 최종 단계
+		// srcAccessMask: 렌더패스 외부 작업에서 보장해야 할 메모리 접근 권한
+		dependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;												// 깊이/스텐실 첨부물 쓰기 권한
+		// dstStageMask: 0번 서브패스에서 동기화를 기다릴 파이프라인 단계
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;	// 색상 첨부물 출력 단계 | 프래그먼트 테스트의 초기 단계
+		// dstAccessMask: 0번 서브패스에서 필요한 메모리 접근 권한
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;			// 색상 첨부물 쓰기 권한 | 깊이/스텐실 첨부물 쓰기 권한
 
 		// [렌더 패스 정의]
+		std::array<VkAttachmentDescription, 2> attachments = {colorAttachment, depthAttachment};
 		VkRenderPassCreateInfo renderPassInfo{};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-		renderPassInfo.attachmentCount = 1;										// attachment 설정 개수 등록
-		renderPassInfo.pAttachments = &colorAttachment;							// attachment 설정 등록
-		renderPassInfo.subpassCount = 1;										// subpass 개수 등록
-		renderPassInfo.pSubpasses = &subpass;									// subpass 등록
-
+		renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size()); // attachment 설정 개수 등록
+		renderPassInfo.pAttachments = attachments.data();							// attachment 설정 등록
+		renderPassInfo.subpassCount = 1;											// subpass 개수 등록
+		renderPassInfo.pSubpasses = &subpass;										// subpass 등록
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &dependency;
+		
 		// [렌더 패스 생성]
 		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create render pass!");
@@ -809,6 +861,15 @@ private:
 													  // VK_FALSE: 테스트&블랜딩 단계부터 샘플별로 계산 후 최종 결과 평균내서 사용 (음영 계산은 동일한 값) 
 		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // 픽셀당 샘플 개수 설정
 
+		// [depth test]
+		VkPipelineDepthStencilStateCreateInfo depthStencil{};
+		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depthStencil.depthTestEnable = VK_TRUE;				// 깊이 테스트 활성화 여부를 지정
+		depthStencil.depthWriteEnable = VK_TRUE;			// 깊이 버퍼 쓰기 활성화 여부
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;	// 깊이 비교 연산 설정 (VK_COMPARE_OP_LESS: 현재 픽셀의 깊이가 더 작으면 통과)
+		depthStencil.depthBoundsTestEnable = VK_FALSE;		// 깊이 범위 테스트 활성화 여부를 지정
+		depthStencil.stencilTestEnable = VK_FALSE;			// 스텐실 테스트 활성화 여부를 지정
+
 		// [블랜딩 설정]
 		// attachment 별 블랜딩 설정 (블랜딩 + 프레임 버퍼 기록 설정)
 		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
@@ -861,7 +922,7 @@ private:
 		pipelineInfo.pViewportState = &viewportState;				// viewport, scissor 정보 입력
 		pipelineInfo.pRasterizationState = &rasterizer;				// 레스터라이저 설정 입력
 		pipelineInfo.pMultisampleState = &multisampling;			// multisampling 설정 입력
-		pipelineInfo.pDepthStencilState = nullptr; 					// Optional
+		pipelineInfo.pDepthStencilState = &depthStencil;			// depth-stencil 설정
 		pipelineInfo.pColorBlendState = &colorBlending;				// 블랜딩 설정 입력
 		pipelineInfo.pDynamicState = &dynamicState;					// 동적으로 변경할 상태 입력
 		pipelineInfo.layout = pipelineLayout;						// 파이프라인 레이아웃 설정 입력
@@ -892,18 +953,19 @@ private:
 
 		// 이미지 뷰마다 프레임 버퍼 1개씩 생성
 		for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-			VkImageView attachments[] = {
-				swapChainImageViews[i]
+			std::array<VkImageView, 2> attachments = {
+				swapChainImageViews[i],
+				depthImageView
 			};
 
 			VkFramebufferCreateInfo framebufferInfo{};
 			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-			framebufferInfo.renderPass = renderPass; 							// 렌더 패스 등록
-			framebufferInfo.attachmentCount = 1; 								// attachment 개수
-			framebufferInfo.pAttachments = attachments;							// attachment 등록
-			framebufferInfo.width = swapChainExtent.width;						// 프레임 버퍼 width
-			framebufferInfo.height = swapChainExtent.height;					// 프레임 버퍼 height
-			framebufferInfo.layers = 1;											// 레이어 수
+			framebufferInfo.renderPass = renderPass; 										// 렌더 패스 등록
+			framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size()); 	// attachment 개수
+			framebufferInfo.pAttachments = attachments.data();								// attachment 등록
+			framebufferInfo.width = swapChainExtent.width;									// 프레임 버퍼 width
+			framebufferInfo.height = swapChainExtent.height;								// 프레임 버퍼 height
+			framebufferInfo.layers = 1;														// 레이어 수
 
 			if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
 				throw std::runtime_error("failed to create framebuffer!");
@@ -931,6 +993,47 @@ private:
 		if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create command pool!");
 		}
+	}
+
+	// Depth test에 쓰일 image, imageView 준비
+    void createDepthResources() {
+		// depth image의 format 결정
+        VkFormat depthFormat = findDepthFormat();
+
+        createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
+        depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+    }
+
+	// Vulkan의 특정 format에 대해 GPU가 tiling의 features를 지원하는지 확인
+	VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
+		// format 들에 대해 GPU가 tiling과 features를 지원하는지 확인
+		for (VkFormat format : candidates) {
+			// GPU가 format에 대해 지원하는 특성 가져오는 함수
+			VkFormatProperties props;
+			vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+
+			// GPU가 지원하는 특성과 비교
+			if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {				// VK_IMAGE_TILING_LINEAR의 특성 비교
+				return format;
+			} else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {		// VK_IMAGE_TILING_OPTIMAL의 특성 비교
+				return format;
+			}
+		}
+
+		throw std::runtime_error("failed to find supported format!");
+	}
+
+	// depth image의 format 설정
+	VkFormat findDepthFormat() {
+		return findSupportedFormat(
+			{VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT},
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+		);
+	}
+
+	bool hasStencilComponent(VkFormat format) {
+		return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 	}
 
 	void createTextureImage() {
@@ -979,7 +1082,7 @@ private:
 	// 텍스처 이미지 뷰 생성
 	void createTextureImageView() {
 		// SRGB 총 4바이트 포맷으로 된 이미지 뷰 생성
-		textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+		textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 	}
 
 	// 텍스처를 위한 샘플러 생성 함수
@@ -1011,14 +1114,14 @@ private:
 	}
 
 	// 이미지 뷰 생성
-	VkImageView createImageView(VkImage image, VkFormat format) {
+	VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags) {
 		// 이미지 뷰 정보 생성
 		VkImageViewCreateInfo viewInfo{};
 		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		viewInfo.image = image;													// 이미지 핸들
 		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;								// 이미지 타입
 		viewInfo.format = format;												// 이미지 포맷
-		viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;    	// 이미지 형식 결정 (color / depth / stencil 등)
+		viewInfo.subresourceRange.aspectMask = aspectFlags;  					// 이미지 형식 결정 (color / depth / stencil 등)
 		viewInfo.subresourceRange.baseMipLevel = 0;                          	// 렌더링할 mipmap 단계 설정
 		viewInfo.subresourceRange.levelCount = 1;                            	// baseMipLevel 기준으로 몇 개의 MipLevel을 더 사용할지 설정 (실제 mipmap 만드는 건 따로 해줘야함)
 		viewInfo.subresourceRange.baseArrayLayer = 0;                        	// ImageView가 참조하는 이미지 레이어의 시작 위치 정의
@@ -1502,9 +1605,12 @@ private:
 		renderPassInfo.renderArea.offset = {0, 0};							// 렌더링 시작 좌표 등록
 		renderPassInfo.renderArea.extent = swapChainExtent;					// 렌더링 width, height 등록 (보통 프레임버퍼, 스왑체인의 크기와 같게 설정)
 
-		VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};				
-		renderPassInfo.clearValueCount = 1;									// clear color 개수 등록
-		renderPassInfo.pClearValues = &clearColor;							// clear color 등록 (첨부한 attachment 개수와 같게 등록)
+        std::array<VkClearValue, 2> clearValues{};
+        clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+        clearValues[1].depthStencil = {1.0f, 0};				
+
+		renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());		// clear color 개수 등록
+		renderPassInfo.pClearValues = clearValues.data();								// clear color 등록 (첨부한 attachment 개수와 같게 등록)
 		
 		/* 
 			[렌더 패스를 시작하는 명령을 기록] 
