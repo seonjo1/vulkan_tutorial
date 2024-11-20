@@ -1107,39 +1107,43 @@ private:
 		}
 	}
 
+	// .obj 파일을 읽고 vertices, indices 채우기
 	void loadModel() {
 		Assimp::Importer importer;
-		// scene 생성
+		// scene 구조체 받아오기
 		auto scene = importer.ReadFile(MODEL_PATH, aiProcess_Triangulate | aiProcess_FlipUVs);
 
-		// scene 오류 처리
+		// scene load 오류 처리
 		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
 		{
 			throw std::runtime_error("failed to load obj file!");
 		}
+		// node 데이터 처리
 		processNode(scene->mRootNode, scene);
 	}
 
+	// node에 포함된 mesh들의 데이터 처리
 	void processNode(aiNode *node, const aiScene *scene)
 	{
-		// aiNode 구조체가 가진 aiMesh 처리
+		// node에 포함된 mesh들 순회
 		for (uint32_t i = 0; i < node->mNumMeshes; i++)
 		{
-			// node에서 scene에 있는 mMeshes의 index를 얻음
+			// 현재 처리할 mesh 찾기
 			auto meshIndex = node->mMeshes[i];
-			// 얻은 index를 통해 mesh 찾기
 			auto mesh = scene->mMeshes[meshIndex];
-			// mesh 값을 우리의 구조체에 넣어서 보관
+			// 현재 mesh 데이터 처리
 			processMesh(mesh, scene);
 		}
 
+		// 자식 노드 처리
 		for (uint32_t i = 0; i < node->mNumChildren; i++)
 			processNode(node->mChildren[i], scene);
 	}
 
-
+	// mesh의 vetex, index 데이터 처리
 	void processMesh(aiMesh *mesh, const aiScene *scene)
 	{
+		// mesh의 vertex 정보 저장
 		vertices.resize(mesh->mNumVertices);
 		for (uint32_t i = 0; i < mesh->mNumVertices; i++)
 		{
@@ -1149,6 +1153,7 @@ private:
 			v.color = {1.0f, 1.0f, 1.0f};
 		}
 
+		// mesh의 index 정보 저장
 		indices.resize(mesh->mNumFaces * 3);
 		// face의 개수 = triangle 개수
 		for (uint32_t i = 0; i < mesh->mNumFaces; i++)
