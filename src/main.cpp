@@ -1,6 +1,10 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
 
@@ -23,6 +27,10 @@
 #include <array>
 #include <optional>
 #include <set>
+
+// texture 경로
+const std::string MODEL_PATH = "models/viking_room.obj";
+const std::string TEXTURE_PATH = "textures/viking_room.png";
 
 // 동시에 처리할 최대 프레임 수
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -138,23 +146,6 @@ struct UniformBufferObject {
 	alignas(16) glm::mat4 proj;
 };
 
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
-};
-
-const std::vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
-};
-
 class HelloTriangleApplication {
 public:
 	void run() {
@@ -200,6 +191,8 @@ private:
 	VkImageView textureImageView;
     VkSampler textureSampler;
 
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
 	VkBuffer indexBuffer;
@@ -260,6 +253,7 @@ private:
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
+		loadModel();
 		createVertexBuffer();
 		createIndexBuffer();
 		createUniformBuffers();		
@@ -1038,7 +1032,7 @@ private:
 
 	void createTextureImage() {
 		int texWidth, texHeight, texChannels;
-		stbi_uc* pixels = stbi_load("textures/texture.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha); // 알파 채널을 포함하여 rgba 픽셀로 이미지 저장
+		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha); // 알파 채널을 포함하여 rgba 픽셀로 이미지 저장
 		VkDeviceSize imageSize = texWidth * texHeight * 4;  // 이미지 크기 (픽셀당 4byte)
 
 		if (!pixels) {
@@ -1110,6 +1104,58 @@ private:
 		// 샘플러 생성
 		if (vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create texture sampler!");
+		}
+	}
+
+	void loadModel() {
+		Assimp::Importer importer;
+		// scene 생성
+		auto scene = importer.ReadFile(MODEL_PATH, aiProcess_Triangulate | aiProcess_FlipUVs);
+
+		// scene 오류 처리
+		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
+		{
+			throw std::runtime_error("failed to load obj file!");
+		}
+		processNode(scene->mRootNode, scene);
+	}
+
+	void processNode(aiNode *node, const aiScene *scene)
+	{
+		// aiNode 구조체가 가진 aiMesh 처리
+		for (uint32_t i = 0; i < node->mNumMeshes; i++)
+		{
+			// node에서 scene에 있는 mMeshes의 index를 얻음
+			auto meshIndex = node->mMeshes[i];
+			// 얻은 index를 통해 mesh 찾기
+			auto mesh = scene->mMeshes[meshIndex];
+			// mesh 값을 우리의 구조체에 넣어서 보관
+			processMesh(mesh, scene);
+		}
+
+		for (uint32_t i = 0; i < node->mNumChildren; i++)
+			processNode(node->mChildren[i], scene);
+	}
+
+
+	void processMesh(aiMesh *mesh, const aiScene *scene)
+	{
+		vertices.resize(mesh->mNumVertices);
+		for (uint32_t i = 0; i < mesh->mNumVertices; i++)
+		{
+			Vertex& v = vertices[i];
+			v.pos = glm::vec3(mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z);
+			v.texCoord = glm::vec2(mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y);
+			v.color = {1.0f, 1.0f, 1.0f};
+		}
+
+		indices.resize(mesh->mNumFaces * 3);
+		// face의 개수 = triangle 개수
+		for (uint32_t i = 0; i < mesh->mNumFaces; i++)
+		{
+			indices[3 * i] = mesh->mFaces[i].mIndices[0];
+			indices[3 * i + 1] = mesh->mFaces[i].mIndices[1];
+			indices[3 * i + 2] = mesh->mFaces[i].mIndices[2];
 		}
 	}
 
@@ -1646,7 +1692,7 @@ private:
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets); // 커맨드 버퍼에 버텍스 버퍼 바인딩
 
 		// 인덱스 정보 입력
-		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16); // 커맨드 버퍼에 인덱스 버퍼 바인딩 (4번째 매개변수 index 데이터 타입 uint16 설정)
+		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32); // 커맨드 버퍼에 인덱스 버퍼 바인딩 (4번째 매개변수 index 데이터 타입 uint32 설정)
 
 		// 디스크립터 셋을 커맨드 버퍼에 바인딩
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
