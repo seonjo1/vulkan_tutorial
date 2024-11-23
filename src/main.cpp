@@ -534,6 +534,7 @@ private:
 		// 일단 지금은 VK_FALSE로 전부 등록함
 		VkPhysicalDeviceFeatures deviceFeatures{};
         deviceFeatures.samplerAnisotropy = VK_TRUE;		// 이방성 필터링 사용 설정
+		deviceFeatures.sampleRateShading = VK_TRUE; 	// 디바이스에 샘플 셰이딩 기능 활성화
 
 		// 논리적 장치 생성을 위한 정보 등록
 		VkDeviceCreateInfo createInfo{};
